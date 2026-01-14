@@ -21,6 +21,7 @@ let s:defaults = {
     \ 'karate_linter_no_space_after_keyword_level': 'KarateLintError',
     \ 'karate_linter_auto_format_on_save': 1,
     \ 'karate_linter_missing_examples_rule': 1,
+    \ 'karate_linter_missing_examples_level': 'KarateLintError',
     \ 'karate_linter_call_read_space_rule': 1,
     \ 'karate_linter_call_read_space_level': 'KarateLintError',
     \ 'karate_linter_unclosed_read_rule': 1,
@@ -88,7 +89,7 @@ function! s:generate_lint_report()
     if g:karate_linter_missing_examples_rule
         let invalid_lines = s:find_invalid_outlines()
         for lnum in invalid_lines
-            call add(report, {'filename': filename, 'lnum': lnum, 'text': "'Scenario Outline' без соответствующего блока 'Examples'", 'type': 'E'})
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': "'Scenario Outline' без соответствующего блока 'Examples'", 'type': g:karate_linter_missing_examples_level == 'KarateLintError' ? 'E' : 'W'})
         endfor
     endif
 
@@ -363,11 +364,13 @@ augroup KarateLinter
     if g:karate_linter_missing_examples_rule
       let l:invalid_lines = s:find_invalid_outlines()
       if !empty(l:invalid_lines)
-        let w:karate_has_errors = 1 " Это правило всегда является ошибкой
-        for line_num in l:invalid_lines
-          let l:pattern = '\%' . line_num . 'l.\+'
-          call add(w:karate_lint_matches, matchadd('KarateLintError', l:pattern))
-        endfor
+          if g:karate_linter_missing_examples_level == 'KarateLintError'
+              let w:karate_has_errors = 1
+          endif
+          for line_num in l:invalid_lines
+              let l:pattern = '\%' . line_num . 'l.\+'
+              call add(w:karate_lint_matches, matchadd(g:karate_linter_missing_examples_level, l:pattern))
+          endfor
       endif
     endif
 
