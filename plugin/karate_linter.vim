@@ -47,6 +47,103 @@ unlet s:defaults
 " --- КОНЕЦ КОНФИГУРАЦИИ ---
 
 
+function! s:generate_lint_report()
+    let report = []
+    let filename = bufname('%')
+
+    " --- Простые правила (проверка построчно) ---
+    for lnum in range(1, line('$'))
+        let line = getline(lnum)
+
+        if g:karate_linter_tabs_rule && line =~ '\t'
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Использование табов запрещено', 'type': g:karate_linter_tabs_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+
+        if g:karate_linter_trailing_space_rule && line =~ '\s\+$'
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Лишние пробелы в конце строки', 'type': g:karate_linter_trailing_space_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+        
+        if g:karate_linter_max_line_length > 0 && len(line) > g:karate_linter_max_line_length
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': printf('Строка слишком длинная (%d > %d)', len(line), g:karate_linter_max_line_length), 'type': g:karate_linter_max_line_length_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+
+        if g:karate_linter_and_but_rule && line =~ '^\s*But\s'
+             call add(report, {'filename': filename, 'lnum': lnum, 'text': "Используйте 'And' вместо 'But' для консистентности", 'type': g:karate_linter_and_but_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+        
+        if g:karate_linter_no_space_after_keyword_rule && line =~ '^\s*\(\*\|Given\|When\|Then\|And\|But\)\S'
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Отсутствует пробел после ключевого слова (Given, When, Then, и т.д.)', 'type': g:karate_linter_no_space_after_keyword_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+
+        if g:karate_linter_call_read_space_rule && line =~ '\bcallread('
+             call add(report, {'filename': filename, 'lnum': lnum, 'text': "Используйте 'call read' вместо 'callread'", 'type': g:karate_linter_call_read_space_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+
+        if g:karate_linter_unclosed_read_rule && line =~ '^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)'
+             call add(report, {'filename': filename, 'lnum': lnum, 'text': "Незакрытая функция read()", 'type': g:karate_linter_unclosed_read_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+    endfor
+
+    " --- Сложные и многострочные правила ---
+    if g:karate_linter_missing_examples_rule
+        let invalid_lines = s:find_invalid_outlines()
+        for lnum in invalid_lines
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': "'Scenario Outline' без соответствующего блока 'Examples'", 'type': 'E'})
+        endfor
+    endif
+
+    if g:karate_linter_orphaned_examples_rule
+        let invalid_lines = s:find_orphaned_examples()
+        for lnum in invalid_lines
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': "Найден 'осиротевший' блок 'Examples' без 'Scenario Outline'", 'type': g:karate_linter_orphaned_examples_level == 'KarateLintError' ? 'E' : 'W'})
+        endfor
+    endif
+
+    if g:karate_linter_unclosed_docstring_rule
+        let lnum = s:find_unclosed_docstring()
+        if lnum > 0
+            call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Незакрытый DocString (нечетное количество """). Последний найден здесь.', 'type': g:karate_linter_unclosed_docstring_level == 'KarateLintError' ? 'E' : 'W'})
+        endif
+    endif
+
+    " --- Правила для проверки структуры файла ---
+    let buffer_lines = getline(1, '$')
+    if g:karate_linter_missing_feature_rule
+      if empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
+        call add(report, {'filename': filename, 'lnum': 1, 'text': "Отсутствует обязательный блок 'Feature:' в файле", 'type': g:karate_linter_missing_feature_level == 'KarateLintError' ? 'E' : 'W'})
+      endif
+    endif
+
+    if g:karate_linter_missing_scenario_rule
+      if empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario Outline:''')) && empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario:'''))
+        call add(report, {'filename': filename, 'lnum': 1, 'text': "Отсутствуют блоки 'Scenario:' или 'Scenario Outline:' в файле", 'type': g:karate_linter_missing_scenario_level == 'KarateLintError' ? 'E' : 'W'})
+      endif
+    endif
+    
+    if g:karate_linter_missing_background_rule
+      let has_feature = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
+      let has_scenario = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario Outline:''')) || !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario:'''))
+      if has_feature && has_scenario && empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Background:'''))
+        call add(report, {'filename': filename, 'lnum': 1, 'text': "Отсутствует блок 'Background'", 'type': g:karate_linter_missing_background_level == 'KarateLintError' ? 'E' : 'W'})
+      endif
+    endif
+
+    return report
+endfunction
+
+function! s:run_linter_and_show_loclist()
+    let report = s:generate_lint_report()
+    if empty(report)
+        echom "[Karate] Проблем не найдено."
+        return
+    endif
+    call setloclist(0, [], 'r') " Clear previous list
+    call setloclist(0, report, 'a')
+    lopen
+endfunction
+
+command! KarateLintCheck call s:run_linter_and_show_loclist()
+
 augroup KarateLinter
   autocmd!
 
