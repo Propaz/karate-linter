@@ -385,7 +385,7 @@ augroup KarateLinter
     " Rule: Unclosed 'read' function
     if g:karate_linter_unclosed_read_rule
       call add(w:karate_lint_matches, matchadd(g:karate_linter_unclosed_read_level, '^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)'))
-       if !w:karate_has_errors && g:karate_linter_unclosed_read_level == 'KarateLintError' && line !~ 'header Accept'
+       if !w:karate_has_errors && g:karate_linter_unclosed_read_level == 'KarateLintError'
           if search('^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)', 'nwc') > 0 | let w:karate_has_errors = 1 | endif
       endif
     endif
