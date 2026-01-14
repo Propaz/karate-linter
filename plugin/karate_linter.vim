@@ -28,8 +28,13 @@ let s:defaults = {
     \ 'karate_linter_orphaned_examples_rule': 1,
     \ 'karate_linter_orphaned_examples_level': 'KarateLintError',
     \ 'karate_linter_unclosed_docstring_rule': 1,
-    \ 'karate_linter_unclosed_docstring_level': 'KarateLintError',
-     \ }
+         \ 'karate_linter_unclosed_docstring_level': 'KarateLintError',
+         \ 'karate_linter_missing_feature_rule': 1,
+         \ 'karate_linter_missing_feature_level': 'KarateLintWarn',
+         \ 'karate_linter_missing_scenario_rule': 1,
+         \ 'karate_linter_missing_scenario_level': 'KarateLintWarn',
+         \ 'karate_linter_missing_background_rule': 1,
+         \ 'karate_linter_missing_background_level': 'KarateLintWarn',     \ }
 
 for var_name in keys(s:defaults)
     if !exists('g:' . var_name)
@@ -307,6 +312,40 @@ augroup KarateLinter
         endif
         let l:pattern = '\%' . l:unclosed_line_num . 'l.\+'
         call add(w:karate_lint_matches, matchadd(g:karate_linter_unclosed_docstring_level, l:pattern))
+      endif
+    endif
+
+    " Правило: Отсутствует 'Feature:'
+    if g:karate_linter_missing_feature_rule
+      if match(join(getline(1, '$'), "\n"), '^\s*Feature:') == -1
+        call add(w:karate_lint_matches, matchadd(g:karate_linter_missing_feature_level, '\%1l.\+'))
+        if !w:karate_has_errors && g:karate_linter_missing_feature_level == 'KarateLintError'
+          let w:karate_has_errors = 1
+        endif
+      endif
+    endif
+
+    " Правило: Отсутствуют 'Scenario:' / 'Scenario Outline:'
+    if g:karate_linter_missing_scenario_rule
+      let l:buffer_content = join(getline(1, '$'), "\n")
+      if match(l:buffer_content, '^\s*Scenario Outline:') == -1 && match(l:buffer_content, '^\s*Scenario:') == -1
+        call add(w:karate_lint_matches, matchadd(g:karate_linter_missing_scenario_level, '\%1l.\+'))
+        if !w:karate_has_errors && g:karate_linter_missing_scenario_level == 'KarateLintError'
+          let w:karate_has_errors = 1
+        endif
+      endif
+    endif
+
+    " Правило: Отсутствует 'Background:' (предупреждение, если Feature и Scenario есть)
+    if g:karate_linter_missing_background_rule
+      let l:buffer_content = join(getline(1, '$'), "\n")
+      let l:has_feature = match(l:buffer_content, '^\s*Feature:') != -1
+      let l:has_scenario = match(l:buffer_content, '^\s*Scenario Outline:') != -1 || match(l:buffer_content, '^\s*Scenario:') != -1
+      if l:has_feature && l:has_scenario && match(l:buffer_content, '^\s*Background:') == -1
+        call add(w:karate_lint_matches, matchadd(g:karate_linter_missing_background_level, '\%1l.\+'))
+        if !w:karate_has_errors && g:karate_linter_missing_background_level == 'KarateLintError'
+          let w:karate_has_errors = 1
+        endif
       endif
     endif
     
