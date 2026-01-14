@@ -80,7 +80,7 @@ function! s:generate_lint_report()
              call add(report, {'filename': filename, 'lnum': lnum, 'text': "Use 'call read' instead of 'callread'", 'type': g:karate_linter_call_read_space_level == 'KarateLintError' ? 'E' : 'W'})
         endif
 
-        if g:karate_linter_unclosed_read_rule && line =~ '^\s*\(Given\|When\|Then\|And\|But\|\*\).*\read\([^)]*$\)' && line !~ 'header Accept'
+        if g:karate_linter_unclosed_read_rule && line =~ '^\s*\(Given\|When\|Then\|And\|But\|\*\).*\read\([^)]*$\)'
              call add(report, {'filename': filename, 'lnum': lnum, 'text': "Unclosed read() function", 'type': g:karate_linter_unclosed_read_level == 'KarateLintError' ? 'E' : 'W'})
         endif
     endfor
