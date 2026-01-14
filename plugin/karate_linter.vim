@@ -28,13 +28,14 @@ let s:defaults = {
     \ 'karate_linter_orphaned_examples_rule': 1,
     \ 'karate_linter_orphaned_examples_level': 'KarateLintError',
     \ 'karate_linter_unclosed_docstring_rule': 1,
-         \ 'karate_linter_unclosed_docstring_level': 'KarateLintError',
-         \ 'karate_linter_missing_feature_rule': 1,
-         \ 'karate_linter_missing_feature_level': 'KarateLintWarn',
-         \ 'karate_linter_missing_scenario_rule': 1,
-         \ 'karate_linter_missing_scenario_level': 'KarateLintWarn',
-         \ 'karate_linter_missing_background_rule': 1,
-         \ 'karate_linter_missing_background_level': 'KarateLintWarn',     \ }
+    \ 'karate_linter_unclosed_docstring_level': 'KarateLintError',
+    \ 'karate_linter_missing_feature_rule': 1,
+    \ 'karate_linter_missing_feature_level': 'KarateLintWarn',
+    \ 'karate_linter_missing_scenario_rule': 1,
+    \ 'karate_linter_missing_scenario_level': 'KarateLintWarn',
+    \ 'karate_linter_missing_background_rule': 1,
+    \ 'karate_linter_missing_background_level': 'KarateLintWarn'
+    \ }
 
 for var_name in keys(s:defaults)
     if !exists('g:' . var_name)
