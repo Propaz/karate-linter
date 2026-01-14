@@ -165,10 +165,10 @@ augroup KarateLinter
     let l:outline_start_line = 0
     for l:line_num in range(1, line('$'))
       let l:line_text = getline(l:line_num)
-      let l:is_outline = l:line_text =~ '^\s*Scenario Outline:'
-      let l:is_normal_scenario = l:line_text =~ '^\s*Scenario:' && !l:is_outline
-      let l:is_tag = l:line_text =~ '^\s*@'
-      let l:is_examples = l:line_text =~ '^\s*Examples:'
+      let l:is_outline = l:line_text =~ '^[ \t]*Scenario Outline:'
+      let l:is_normal_scenario = l:line_text =~ '^[ \t]*Scenario:' && !l:is_outline
+      let l:is_tag = l:line_text =~ '^[ \t]*@'
+      let l:is_examples = l:line_text =~ '^[ \t]*Examples:'
       if l:is_normal_scenario || l:is_tag
         if l:outline_start_line > 0
           call add(l:invalid_outline_lines, l:outline_start_line)
@@ -200,10 +200,10 @@ augroup KarateLinter
 
     let awk_script = [
     \ 'BEGIN { O = 0 }',
-    \ '/^\\s*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
-    \ '/^\\s*Scenario:/ && !/^\\s*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
-    \ '/^\\s*@/ { if (O > 0) { print O; O = 0 } }',
-    \ '/^\\s*Examples:/ { O = 0 }',
+    \ '/^[ \t]*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
+    \ '/^[ \t]*Scenario:/ && !/^[ \t]*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
+    \ '/^[ \t]*@/ { if (O > 0) { print O; O = 0 } }',
+    \ '/^[ \t]*Examples:/ { O = 0 }',
     \ 'END { if (O > 0) { print O } }'
     \ ]
     let awk_command = "awk '" . join(awk_script, " ") . "'"
@@ -220,10 +220,10 @@ augroup KarateLinter
     for l:line_num in range(1, line('$'))
       let l:line_text = getline(l:line_num)
 
-      let l:is_outline = l:line_text =~ '^\s*Scenario Outline:'
-      let l:is_normal_scenario = l:line_text =~ '^\s*Scenario:' && !l:is_outline
-      let l:is_tag = l:line_text =~ '^\s*@'
-      let l:is_examples = l:line_text =~ '^\s*Examples:'
+      let l:is_outline = l:line_text =~ '^[ \t]*Scenario Outline:'
+      let l:is_normal_scenario = l:line_text =~ '^[ \t]*Scenario:' && !l:is_outline
+      let l:is_tag = l:line_text =~ '^[ \t]*@'
+      let l:is_examples = l:line_text =~ '^[ \t]*Examples:'
 
       " Новый сценарий или тег сбрасывает ожидание 'Examples'
       if l:is_normal_scenario || l:is_tag
@@ -255,10 +255,10 @@ augroup KarateLinter
 
     let awk_script = [
     \ 'BEGIN { C = 0 }',
-    \ '/^\\s*Scenario Outline:/ { C = 1 }',
-    \ '/^\\s*Scenario:/ && !/^\\s*Scenario Outline:/ { C = 0 }',
-    \ '/^\\s*@/ { C = 0 }',
-    \ '/^\\s*Examples:/ { if (C) { C = 0 } else { print NR } }'
+    \ '/^[ \t]*Scenario Outline:/ { C = 1 }',
+    \ '/^[ \t]*Scenario:/ && !/^[ \t]*Scenario Outline:/ { C = 0 }',
+    \ '/^[ \t]*@/ { C = 0 }',
+    \ '/^[ \t]*Examples:/ { if (C) { C = 0 } else { print NR } }'
     \ ]
     let awk_command = "awk '" . join(awk_script, " ") . "'"
     let buffer_content = join(getline(1, '$'), "\n")
