@@ -18,12 +18,10 @@ Install using [vim-plug](https://github.com/junegunn/vim-plug):
 
 ```vim
 " Make sure you have ripgrep and awk for the best performance
-Plug 'YOUR_GITHUB_USERNAME/karate_linter'
+Plug 'Propaz/karate_linter'
 ```
 
 Then run `:PlugInstall` in Vim.
-
-**Note:** You will need to replace `YOUR_GITHUB_USERNAME` with the actual GitHub username where this repository is hosted.
 
 ## Configuration
 
