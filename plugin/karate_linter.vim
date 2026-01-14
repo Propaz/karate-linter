@@ -63,7 +63,7 @@ function! s:generate_lint_report()
         if g:karate_linter_trailing_space_rule && line =~ '\s\+$'
             call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Trailing whitespace', 'type': g:karate_linter_trailing_space_level == 'KarateLintError' ? 'E' : 'W'})
         endif
-
+        
         if g:karate_linter_max_line_length > 0 && len(line) > g:karate_linter_max_line_length
             call add(report, {'filename': filename, 'lnum': lnum, 'text': printf('Line is too long (%d > %d)', len(line), g:karate_linter_max_line_length), 'type': g:karate_linter_max_line_length_level == 'KarateLintError' ? 'E' : 'W'})
         endif
@@ -71,7 +71,7 @@ function! s:generate_lint_report()
         if g:karate_linter_and_but_rule && line =~ '^\s*But\s'
              call add(report, {'filename': filename, 'lnum': lnum, 'text': "Use 'And' instead of 'But' for consistency", 'type': g:karate_linter_and_but_level == 'KarateLintError' ? 'E' : 'W'})
         endif
-
+        
         if g:karate_linter_no_space_after_keyword_rule && line =~ '^\s*\(\*\|Given\|When\|Then\|And\|But\)\S'
             call add(report, {'filename': filename, 'lnum': lnum, 'text': 'Missing space after keyword (Given, When, Then, etc.)', 'type': g:karate_linter_no_space_after_keyword_level == 'KarateLintError' ? 'E' : 'W'})
         endif
@@ -80,7 +80,7 @@ function! s:generate_lint_report()
              call add(report, {'filename': filename, 'lnum': lnum, 'text': "Use 'call read' instead of 'callread'", 'type': g:karate_linter_call_read_space_level == 'KarateLintError' ? 'E' : 'W'})
         endif
 
-        if g:karate_linter_unclosed_read_rule && line =~ '^\s*\(Given\|When\|Then\|And\|But\|\*\).*\read\([^)]*$\)'
+        if g:karate_linter_unclosed_read_rule && line =~ '^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)'
              call add(report, {'filename': filename, 'lnum': lnum, 'text': "Unclosed read() function", 'type': g:karate_linter_unclosed_read_level == 'KarateLintError' ? 'E' : 'W'})
         endif
     endfor
@@ -120,7 +120,7 @@ function! s:generate_lint_report()
         call add(report, {'filename': filename, 'lnum': 1, 'text': "Missing 'Scenario:' or 'Scenario Outline:' blocks in the file", 'type': g:karate_linter_missing_scenario_level == 'KarateLintError' ? 'E' : 'W'})
       endif
     endif
-
+    
     if g:karate_linter_missing_background_rule
       let has_feature = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
       let has_scenario = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario Outline:''')) || !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario:'''))
@@ -210,7 +210,7 @@ augroup KarateLinter
 
     let buffer_content = join(getline(1, '$'), "\n")
     let output_lines = systemlist(awk_command, buffer_content)
-
+    
     return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
   endfunction
 
@@ -263,7 +263,7 @@ augroup KarateLinter
     let awk_command = "awk '" . join(awk_script, " ") . "'"
     let buffer_content = join(getline(1, '$'), "\n")
     let output_lines = systemlist(awk_command, buffer_content)
-
+    
     return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
   endfunction
 
@@ -297,7 +297,7 @@ augroup KarateLinter
 
     let buffer_content = getline(1, '$')
     let content_string = join(buffer_content, "\n")
-
+    
     " systemlist() passes content_string to rg's stdin.
     let matches = systemlist("rg --no-filename --line-number --fixed-strings '\"\"\"'", content_string)
 
@@ -381,12 +381,12 @@ augroup KarateLinter
           if search('\bcallread(', 'nwc') > 0 | let w:karate_has_errors = 1 | endif
       endif
     endif
-
+    
     " Rule: Unclosed 'read' function
     if g:karate_linter_unclosed_read_rule
-      call add(w:karate_lint_matches, matchadd(g:karate_linter_unclosed_read_level, '^\s*\(Given\|When\|Then\|And\|But\|\*\).*\read\([^)]*$\)'))
+      call add(w:karate_lint_matches, matchadd(g:karate_linter_unclosed_read_level, '^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)'))
        if !w:karate_has_errors && g:karate_linter_unclosed_read_level == 'KarateLintError'
-          if search('^\s*\(Given\|When\|Then\|And\|But\|\*\).*\read\([^)]*$\)', 'nwc') > 0 | let w:karate_has_errors = 1 | endif
+          if search('^\s*\(Given\|When\|Then\|And\|But\|\*\).*read\([^)]*$\)', 'nwc') > 0 | let w:karate_has_errors = 1 | endif
       endif
     endif
 
@@ -449,7 +449,7 @@ augroup KarateLinter
         endif
       endif
     endif
-
+    
     call setpos('.', l:cursor_pos) " Restore cursor position
 endfunction
 
