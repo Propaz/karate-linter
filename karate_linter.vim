@@ -56,7 +56,7 @@ augroup KarateLinter
     endif
   endfunction
 
-  function! s:find_invalid_outlines()
+  function! s:find_invalid_outlines_vim()
     let l:invalid_outline_lines = []
     let l:outline_start_line = 0
     for l:line_num in range(1, line('$'))
@@ -89,8 +89,28 @@ augroup KarateLinter
     return l:invalid_outline_lines
   endfunction
 
-  " НОВАЯ ФУНКЦИЯ
-  function! s:find_orphaned_examples()
+  function! s:find_invalid_outlines()
+    if !executable('awk')
+      return s:find_invalid_outlines_vim()
+    endif
+
+    let awk_script = [
+    \ 'BEGIN { O = 0 }',
+    \ '/^\\s*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
+    \ '/^\\s*Scenario:/ && !/^\\s*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
+    \ '/^\\s*@/ { if (O > 0) { print O; O = 0 } }',
+    \ '/^\\s*Examples:/ { O = 0 }',
+    \ 'END { if (O > 0) { print O } }'
+    \ ]
+    let awk_command = "awk '" . join(awk_script, " ") . "'"
+
+    let buffer_content = join(getline(1, '$'), "\n")
+    let output_lines = systemlist(awk_command, buffer_content)
+    
+    return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
+  endfunction
+
+  function! s:find_orphaned_examples_vim()
     let l:orphaned_lines = []
     let l:outline_context_active = 0 " Становится 1 после 'Scenario Outline'
     for l:line_num in range(1, line('$'))
@@ -124,7 +144,27 @@ augroup KarateLinter
     return l:orphaned_lines
   endfunction
 
-  function! s:find_unclosed_docstring()
+  function! s:find_orphaned_examples()
+    if !executable('awk')
+      return s:find_orphaned_examples_vim()
+    endif
+
+    let awk_script = [
+    \ 'BEGIN { C = 0 }',
+    \ '/^\\s*Scenario Outline:/ { C = 1 }',
+    \ '/^\\s*Scenario:/ && !/^\\s*Scenario Outline:/ { C = 0 }',
+    \ '/^\\s*@/ { C = 0 }',
+    \ '/^\\s*Examples:/ { if (C) { C = 0 } else { print NR } }'
+    \ ]
+    let awk_command = "awk '" . join(awk_script, " ") . "'"
+    let buffer_content = join(getline(1, '$'), "\n")
+    let output_lines = systemlist(awk_command, buffer_content)
+    
+    return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
+  endfunction
+
+  function! s:find_unclosed_docstring_vim()
+    " This is the original pure Vimscript implementation.
     let l:last_occurrence_line = 0
     let l:count = 0
     for l:line_num in range(1, line('$'))
@@ -139,6 +179,29 @@ augroup KarateLinter
 
     if l:count % 2 != 0
       return l:last_occurrence_line
+    else
+      return 0
+    endif
+  endfunction
+
+  function! s:find_unclosed_docstring()
+    " Используем ripgrep для быстрого подсчета, если он доступен.
+    " Возвращаемся к реализации VimL, если rg отсутствует.
+    if !executable('rg')
+      return s:find_unclosed_docstring_vim()
+    endif
+
+    let buffer_content = getline(1, '$')
+    let content_string = join(buffer_content, "\n")
+    
+    " systemlist() передает content_string в stdin для rg.
+    let matches = systemlist("rg --no-filename --line-number --fixed-strings '\"\"\"'", content_string)
+
+    if len(matches) % 2 != 0 && !empty(matches)
+      let last_match = matches[-1]
+      " Формат вывода rg: "номер_строки:колонка:совпадение"
+      let line_num_str = split(last_match, ':')[0]
+      return str2nr(line_num_str)
     else
       return 0
     endif
