@@ -223,7 +223,7 @@ function! s:generate_lint_report()
         call s:AddLineDiag(report, l:processed_lines, 1, "Missing 'Background' block", g:karate_linter_missing_background_level)
       endif
     endif
-    
+
     return report
 endfunction
 
@@ -563,7 +563,7 @@ augroup KarateLinter
 
   " Update diagnostics on events
   autocmd BufEnter,BufWinEnter,TextChanged,TextChangedI *.feature call s:update_diagnostics()
-  
+
   " Auto-format on save
   autocmd BufWritePre *.feature call s:auto_format_on_save()
 augroup END
