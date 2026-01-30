@@ -35,7 +35,9 @@ let s:defaults = {
     \ 'karate_linter_missing_scenario_rule': 1,
     \ 'karate_linter_missing_scenario_level': 'KarateLintWarn',
     \ 'karate_linter_missing_background_rule': 1,
-    \ 'karate_linter_missing_background_level': 'KarateLintWarn'
+    \ 'karate_linter_missing_background_level': 'KarateLintWarn',
+    \ 'karate_linter_unused_variable_rule': 1,
+    \ 'karate_linter_unused_variable_level': 'KarateLintWarn'
     \ }
 
 for var_name in keys(s:defaults)
@@ -56,9 +58,9 @@ if has('textprop')
   call prop_type_add('karate_lint_warn', { 'highlight': 'KarateLintWarn' })
 endif
 
-if has('sign_define')
-  sign define KarateLintError text=>> texthl=KarateLintError
-  sign define KarateLintWarn text=WW texthl=KarateLintWarn
+if has('signs')
+  call sign_define('KarateLintError', {'text': '>>', 'texthl': 'KarateLintError'})
+  call sign_define('KarateLintWarn', {'text': 'W>', 'texthl': 'KarateLintWarn'})
 endif
 
 let s:sign_id = 1000 " Starting sign ID for this plugin
@@ -157,6 +159,9 @@ function! s:generate_lint_report()
             endif
         endif
     endfor
+
+    " --- Unused variable check ---
+    call extend(report, s:find_unused_variables())
 
     " --- Complex and multi-line rules (highlighting the whole line) ---
     let l:processed_lines = {} " Helper to avoid duplicate line highlights
@@ -340,6 +345,69 @@ function! s:find_unclosed_reads()
     return invalid_lines
 endfunction
 
+function! s:find_unused_variables()
+    let report = []
+    if !g:karate_linter_unused_variable_rule | return report | endif
+
+    let lines = getline(1, '$')
+    let definitions = {}
+
+    " Pass 1: Find all variable definitions
+    let def_pattern = '^\s*\*\s*def\s\+\([a-zA-Z0-9_]\+\)'
+    for i in range(len(lines))
+        let line = lines[i]
+        let match_list = matchlist(line, def_pattern)
+        if !empty(match_list)
+            let var_name = match_list[1]
+            let lnum = i + 1
+            let definitions[var_name] = lnum
+        endif
+    endfor
+
+    if empty(definitions) | return report | endif
+
+    " Pass 2: Find usages for each definition
+    let vars_to_check = keys(definitions)
+    for var_name in vars_to_check
+        let is_used = 0
+        let def_lnum = definitions[var_name]
+        let usage_pattern = '\<'.var_name.'\>'
+
+        for i in range(len(lines))
+            " Don't count the definition line as a usage
+            if (i + 1) == def_lnum | continue | endif
+
+            if lines[i] =~# usage_pattern
+                let is_used = 1
+                break
+            endif
+        endfor
+
+        if is_used
+            call remove(definitions, var_name)
+        endif
+    endfor
+
+    " Pass 3: Report remaining (unused) variables
+    for [var_name, lnum] in items(definitions)
+        let line_content = getline(lnum)
+        let pat = '\<'.var_name.'\>'
+        let match_byte_col = match(line_content, pat)
+        if match_byte_col > -1
+            let match_byte_len = len(matchstr(line_content, pat))
+            call add(report, {
+                \ 'lnum': lnum,
+                \ 'col': match_byte_col + 1,
+                \ 'end_col': match_byte_col + 1 + match_byte_len,
+                \ 'text': 'Unused variable: ' . var_name,
+                \ 'level': g:karate_linter_unused_variable_level
+                \ })
+        endif
+    endfor
+
+    return report
+endfunction
+
 function! s:find_unclosed_docstring_vim()
   " This is the original pure Vimscript implementation.
   let l:last_occurrence_line = 0
@@ -423,7 +491,7 @@ function! s:clear_diagnostics(bufnr)
     call prop_remove({ 'bufnr': bufnr, 'all': 1, 'type': 'karate_lint_warn' })
 
     " Clear signs
-    if has('sign_unplace')
+    if has('signs')
         let sign_group = 'karate_linter_' . bufnr
         call sign_unplace(sign_group, { 'buffer': bufnr })
     endif
@@ -467,7 +535,7 @@ function! s:update_diagnostics()
             \ })
 
         " Add sign in the gutter
-        if has('sign_place')
+        if has('signs')
             call sign_place(sign_id, sign_group, sign_name, bufnr, { 'lnum': issue.lnum })
         endif
     endfor
