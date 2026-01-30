@@ -189,7 +189,7 @@ function! s:generate_lint_report()
         call s:AddLineDiag(report, l:processed_lines, 1, "Missing 'Background' block", g:karate_linter_missing_background_level)
       endif
     endif
-    
+
     return report
 endfunction
 
@@ -561,7 +561,7 @@ function! s:smart_auto_format()
             call setpos('.', l:inner_save_cursor)
 
             if end_lnum == 0 | continue | endif
-            
+
             " Delete the garbled content
             if (end_lnum - start_lnum) > 1
                 execute (start_lnum + 1) . ',' . (end_lnum - 1) . 'delete _'
@@ -615,7 +615,7 @@ function! s:format_json_in_docstring()
 
     let content_lines = getline(start_line + 1, end_line - 1)
     let json_input = join(content_lines, "\n")
-    
+
     " Heuristic check: does it look like JSON?
     let first_char_idx = match(json_input, '\S')
     if first_char_idx == -1
@@ -657,7 +657,7 @@ function! s:format_json_in_docstring()
 
     " 4. Replace the old content with the new formatted content
     execute (start_line + 1) . ',' . (end_line - 1) . 'delete'
-    
+
     " Add indentation to each line of the formatted output
     let indented_lines = map(copy(formatted_lines), { _, val -> indent_str . val })
 
@@ -679,7 +679,7 @@ augroup KarateLinter
 
   " Update diagnostics on events
   autocmd BufEnter,BufWinEnter,TextChanged,TextChangedI *.feature call s:update_diagnostics()
-  
+
   " Auto-format on save
   autocmd BufWritePre *.feature call s:auto_format_on_save()
 augroup END
