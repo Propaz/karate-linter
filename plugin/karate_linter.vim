@@ -87,76 +87,42 @@ function! s:generate_lint_report()
     let report = []
     let filename = bufname('%')
 
+    let s:simple_line_rules = [
+        \  { 'name': 'tabs', 'pattern': '\t', 'text': 'Tabs are not allowed' },
+        \  { 'name': 'trailing_space', 'pattern': '\s\+$', 'text': 'Trailing whitespace' },
+        \  { 'name': 'and_but', 'pattern': 'But', 'line_pattern': '^\s*But\s', 'text': "Use 'And' instead of 'But' for consistency" },
+        \  { 'name': 'no_space_after_keyword', 'pattern': '^\s*\zs\(\*\|Given\|When\|Then\|And\|But\)\S', 'text': 'Missing space after keyword (Given, When, Then, etc.)' },
+        \  { 'name': 'call_read_space', 'pattern': '\bcallread(', 'text': "Use 'call read' instead of 'callread'" },
+        \ ]
+
     " --- Simple rules (line-by-line check) ---
     for lnum in range(1, line('$'))
         let line = getline(lnum)
 
-        " Rule: Tabs
-        if g:karate_linter_tabs_rule && line =~ '\t'
-            let pat = '\t'
-            let match_byte_col = match(line, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': 'Tabs are not allowed', 'level': g:karate_linter_tabs_level })
+        " --- Data-driven simple rules ---
+        for rule in s:simple_line_rules
+            if get(g:, 'karate_linter_' . rule.name . '_rule', 0)
+                let line_pattern = get(rule, 'line_pattern', rule.pattern)
+                if line =~# line_pattern
+                    let pat = rule.pattern
+                    let match_byte_col = match(line, pat)
+                    if match_byte_col > -1
+                        let match_byte_len = len(matchstr(line, pat))
+                        let level = get(g:, 'karate_linter_' . rule.name . '_level', 'KarateLintError')
+                        call add(report, {
+                            \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
+                            \ 'text': rule.text, 'level': level })
+                    endif
+                endif
             endif
-        endif
+        endfor
 
-        " Rule: Trailing whitespace
-        if g:karate_linter_trailing_space_rule && line =~ '\s\+$'
-            let pat = '\s\+$'
-            let match_byte_col = match(line, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': 'Trailing whitespace', 'level': g:karate_linter_trailing_space_level })
-            endif
-        endif
-
-        " Rule: Max line length (byte-based check)
+        " Rule: Max line length (byte-based check) - kept separate due to unique logic
         if g:karate_linter_max_line_length > 0 && len(line) > g:karate_linter_max_line_length
             call add(report, {
                 \ 'lnum': lnum, 'col': g:karate_linter_max_line_length + 1, 'end_col': len(line) + 1,
                 \ 'text': printf('Line is too long (%d > %d bytes)', len(line), g:karate_linter_max_line_length),
                 \ 'level': g:karate_linter_max_line_length_level })
-        endif
-
-        " Rule: 'And' instead of 'But'
-        if g:karate_linter_and_but_rule && line =~ '^\s*But\s'
-            let pat = 'But'
-            let match_byte_col = match(line, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': "Use 'And' instead of 'But' for consistency", 'level': g:karate_linter_and_but_level })
-            endif
-        endif
-
-        " Rule: No space after keyword
-        if g:karate_linter_no_space_after_keyword_rule && line =~ '^\s*\(\*\|Given\|When\|Then\|And\|But\)\S'
-            let pat = '^\s*\zs\(\*\|Given\|When\|Then\|And\|But\)\S'
-            let match_byte_col = match(line, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': 'Missing space after keyword (Given, When, Then, etc.)', 'level': g:karate_linter_no_space_after_keyword_level })
-            endif
-        endif
-
-        " Rule: 'callread' instead of 'call read'
-        if g:karate_linter_call_read_space_rule && line =~ '\bcallread('
-            let pat = '\bcallread('
-            let match_byte_col = match(line, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': "Use 'call read' instead of 'callread'", 'level': g:karate_linter_call_read_space_level })
-            endif
         endif
     endfor
 
@@ -227,15 +193,35 @@ function! s:generate_lint_report()
     return report
 endfunction
 
+function! s:find_all_docstring_ranges()
+    let ranges = []
+    let in_docstring = 0
+    let start_lnum = 0
+    let docstring_pattern = '^\s*"""\s*$'
+
+    for lnum in range(1, line('$'))
+        if getline(lnum) =~# docstring_pattern
+            if !in_docstring
+                let start_lnum = lnum
+                let in_docstring = 1
+            else
+                call add(ranges, [start_lnum, lnum])
+                let in_docstring = 0
+            endif
+        endif
+    endfor
+    return ranges
+endfunction
+
 function! s:find_invalid_outlines_vim()
   let l:invalid_outline_lines = []
   let l:outline_start_line = 0
   for l:line_num in range(1, line('$'))
     let l:line_text = getline(l:line_num)
-    let l:is_outline = l:line_text =~ '^[ \t]*Scenario Outline:'
-    let l:is_normal_scenario = l:line_text =~ '^[ \t]*Scenario:' && !l:is_outline
-    let l:is_tag = l:line_text =~ '^[ \t]*@'
-    let l:is_examples = l:line_text =~ '^[ \t]*Examples:'
+    let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
+    let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
+    let l:is_tag = l:line_text =~ '^[ 	]*@'
+    let l:is_examples = l:line_text =~ '^[ 	]*Examples:'
     if l:is_normal_scenario || l:is_tag
       if l:outline_start_line > 0
         call add(l:invalid_outline_lines, l:outline_start_line)
@@ -267,10 +253,10 @@ function! s:find_invalid_outlines()
 
   let awk_script = [
   \ 'BEGIN { O = 0 }',
-  \ '/^[ \t]*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
-  \ '/^[ \t]*Scenario:/ && !/^[ \t]*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
-  \ '/^[ \t]*@/ { if (O > 0) { print O; O = 0 } }',
-  \ '/^[ \t]*Examples:/ { O = 0 }',
+  \ '/^[ 	]*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
+  \ '/^[ 	]*Scenario:/ && !/^[ 	]*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
+  \ '/^[ 	]*@/ { if (O > 0) { print O; O = 0 } }',
+  \ '/^[ 	]*Examples:/ { O = 0 }',
   \ 'END { if (O > 0) { print O } }'
   \ ]
   let awk_command = "awk '" . join(awk_script, " ") . "'"
@@ -287,10 +273,10 @@ function! s:find_orphaned_examples_vim()
   for l:line_num in range(1, line('$'))
     let l:line_text = getline(l:line_num)
 
-    let l:is_outline = l:line_text =~ '^[ \t]*Scenario Outline:'
-    let l:is_normal_scenario = l:line_text =~ '^[ \t]*Scenario:' && !l:is_outline
-    let l:is_tag = l:line_text =~ '^[ \t]*@'
-    let l:is_examples = l:line_text =~ '^[ \t]*Examples:'
+    let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
+    let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
+    let l:is_tag = l:line_text =~ '^[ 	]*@'
+    let l:is_examples = l:line_text =~ '^[ 	]*Examples:'
 
     " A new scenario or tag resets the expectation for 'Examples'
     if l:is_normal_scenario || l:is_tag
@@ -322,10 +308,10 @@ function! s:find_orphaned_examples()
 
   let awk_script = [
   \ 'BEGIN { C = 0 }',
-  \ '/^[ \t]*Scenario Outline:/ { C = 1 }',
-  \ '/^[ \t]*Scenario:/ && !/^[ \t]*Scenario Outline:/ { C = 0 }',
-  \ '/^[ \t]*@/ { C = 0 }',
-  \ '/^[ \t]*Examples:/ { if (C) { C = 0 } else { print NR } }'
+  \ '/^[ 	]*Scenario Outline:/ { C = 1 }',
+  \ '/^[ 	]*Scenario:/ && !/^[ 	]*Scenario Outline:/ { C = 0 }',
+  \ '/^[ 	]*@/ { C = 0 }',
+  \ '/^[ 	]*Examples:/ { if (C) { C = 0 } else { print NR } }'
   \ ]
   let awk_command = "awk '" . join(awk_script, " ") . "'"
   let buffer_content = join(getline(1, '$'), "\n")
@@ -440,7 +426,7 @@ function! s:find_unclosed_docstring()
   let content_string = join(buffer_content, "\n")
 
   " systemlist() passes content_string to rg's stdin.
-  let matches = systemlist("rg --no-filename --line-number --fixed-strings '\"\"\"'", content_string)
+  let matches = systemlist("rg --no-filename --line-number --fixed-strings '\"\"\'", content_string)
 
   if len(matches) % 2 != 0 && !empty(matches)
     let last_match = matches[-1]
@@ -546,14 +532,144 @@ function! s:has_errors()
     return get(b:, 'karate_has_errors', 0)
 endfunction
 
-function! s:auto_format_on_save()
-    if !g:karate_linter_auto_format_on_save | return | endif
-    if s:has_errors() == 0
-      let l:save_cursor = getcurpos()
-      silent! normal! gg=G
-      call setpos('.', l:save_cursor)
+function! s:smart_auto_format()
+    let l:save_cursor = getcurpos()
+
+    " 1. Find and store original content of all docstring blocks
+    let docstring_ranges = s:find_all_docstring_ranges()
+    let original_blocks = {}
+    for range in docstring_ranges
+        let start_lnum = range[0]
+        let end_lnum = range[1]
+        if (end_lnum - start_lnum) > 1
+            let original_blocks[start_lnum] = getline(start_lnum + 1, end_lnum - 1)
+        else
+            let original_blocks[start_lnum] = []
+        endif
+    endfor
+
+    " 2. Format the entire file with gg=G
+    silent! normal! gg=G
+
+    " 3. Restore the original content of the docstring blocks with new indentation
+    if !empty(original_blocks)
+        for start_lnum in sort(keys(original_blocks), 'n')
+            " Find the new end line for the block by moving the cursor first
+            let l:inner_save_cursor = getcurpos()
+            call cursor(start_lnum + 1, 1)
+            let end_lnum = search('^\s*"""\s*$', 'W')
+            call setpos('.', l:inner_save_cursor)
+
+            if end_lnum == 0 | continue | endif
+            
+            " Delete the garbled content
+            if (end_lnum - start_lnum) > 1
+                execute (start_lnum + 1) . ',' . (end_lnum - 1) . 'delete _'
+            endif
+
+            " Restore original content
+            let content_to_restore = original_blocks[start_lnum]
+            call append(start_lnum, content_to_restore)
+        endfor
     endif
+
+    call setpos('.', l:save_cursor)
 endfunction
+
+function! s:auto_format_on_save()
+    " If we just formatted JSON, skip this auto-format to prevent messing it up.
+    if get(b:, 'karate_just_formatted_json', 0)
+        let b:karate_just_formatted_json = 0 " Consume the flag
+        return
+    endif
+
+    if !g:karate_linter_auto_format_on_save | return | endif
+    if s:has_errors() | return | endif
+
+    call s:smart_auto_format()
+endfunction
+
+
+function! s:format_json_in_docstring()
+    let cursor_lnum = line('.')
+    let docstring_pattern = '^\s*"""\s*$'
+
+    " 1. Find the range of the docstring block around the cursor
+    let start_line = search(docstring_pattern, 'bnW')
+    if start_line == 0 || start_line > cursor_lnum
+        echohl WarningMsg | echo "[Karate] Cursor is not inside a docstring ('''...''') block."
+        return
+    endif
+
+    let end_line = search(docstring_pattern, 'nW')
+    if end_line == 0 || end_line < cursor_lnum
+        echohl WarningMsg | echo "[Karate] Cursor is not inside a docstring ('''...''') block."
+        return
+    endif
+
+    " 2. Extract content and determine indentation
+    if (end_line - start_line) <= 1
+        echom "[Karate] Docstring is empty, nothing to format."
+        return
+    endif
+
+    let content_lines = getline(start_line + 1, end_line - 1)
+    let json_input = join(content_lines, "\n")
+    
+    " Heuristic check: does it look like JSON?
+    let first_char_idx = match(json_input, '\S')
+    if first_char_idx == -1
+        echom "[Karate] Docstring is empty, nothing to format."
+        return
+    endif
+    let first_char = strpart(json_input, first_char_idx, 1)
+    if first_char != '{' && first_char != '['
+        echohl WarningMsg | echo "[Karate] Block does not appear to contain a JSON object ({}) or array ([]). Aborting formatting."
+        return
+    endif
+
+    let base_indent = indent(start_line)
+    let indent_str = repeat(' ', base_indent)
+
+    " 3. Find and call an external formatter
+    let formatted_lines = []
+    let l:err = ''
+    if executable('jq')
+        let formatted_lines = systemlist('jq .', json_input)
+        if v:shell_error != 0
+            let l:err = '[jq] ' . get(formatted_lines, 0, 'Invalid JSON')
+        endif
+    elseif executable('python')
+        let formatted_lines = systemlist('python -m json.tool', json_input)
+        if v:shell_error != 0
+            let l:err = '[python] ' . get(formatted_lines, 0, 'Invalid JSON')
+        endif
+    else
+        echohl ErrorMsg | echo "[Karate] No JSON formatter found. Please install 'jq' or 'python'."
+        return
+    endif
+
+    " Handle formatting errors
+    if !empty(l:err)
+        echohl ErrorMsg | echo "[Karate] Formatting failed: " . l:err
+        return
+    endif
+
+    " 4. Replace the old content with the new formatted content
+    execute (start_line + 1) . ',' . (end_line - 1) . 'delete'
+    
+    " Add indentation to each line of the formatted output
+    let indented_lines = map(copy(formatted_lines), { _, val -> indent_str . val })
+
+    call append(start_line, indented_lines)
+
+    " Set a flag to skip the next auto-format-on-save
+    let b:karate_just_formatted_json = 1
+
+    echom "[Karate] Formatted JSON block."
+endfunction
+
+command! -nargs=0 KarateFmtJson call s:format_json_in_docstring()
 
 
 augroup KarateLinter
