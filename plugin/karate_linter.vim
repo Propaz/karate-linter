@@ -37,7 +37,11 @@ let s:defaults = {
     \ 'karate_linter_missing_background_rule': 1,
     \ 'karate_linter_missing_background_level': 'KarateLintWarn',
     \ 'karate_linter_unused_variable_rule': 1,
-    \ 'karate_linter_unused_variable_level': 'KarateLintWarn'
+    \ 'karate_linter_unused_variable_level': 'KarateLintWarn',
+    \ 'karate_linter_undefined_placeholder_rule': 1,
+    \ 'karate_linter_undefined_placeholder_level': 'KarateLintError',
+    \ 'karate_linter_unused_header_rule': 1,
+    \ 'karate_linter_unused_header_level': 'KarateLintWarn'
     \ }
 
 for var_name in keys(s:defaults)
@@ -166,6 +170,10 @@ function! s:generate_lint_report()
         if lnum > 0
             call s:AddLineDiag(report, l:processed_lines, lnum, 'Unclosed DocString. Block started here.', g:karate_linter_unclosed_docstring_level)
         endif
+    endif
+
+    if g:karate_linter_undefined_placeholder_rule || g:karate_linter_unused_header_rule
+        call extend(report, s:lint_scenario_outlines())
     endif
 
     " --- File structure rules ---
@@ -428,6 +436,157 @@ endfunction
 
 function! s:find_unclosed_docstring()
   return s:find_unclosed_docstring_vim()
+endfunction
+
+function! s:trim(text)
+    return substitute(a:text, '^\s*\|\s*$', '', 'g')
+endfunction
+
+function! s:lint_scenario_outlines()
+    let report = []
+    let buffer_lines = getline(1, '$')
+    let num_lines = len(buffer_lines)
+
+    " --- Step 1: Find all Scenario Outline blocks ---
+    let outlines = []
+    let current_outline = {}
+    let in_outline = 0
+    let lnum = 1
+    while lnum <= num_lines
+        let line = buffer_lines[lnum - 1]
+
+        if line =~ '^\s*Scenario Outline:'
+            if in_outline
+                let current_outline.end = lnum - 1
+                call add(outlines, current_outline)
+            endif
+            let current_outline = { 'start': lnum }
+            let in_outline = 1
+        elseif line =~ '^\s*\(@\|Scenario:\)'
+            if in_outline
+                let current_outline.end = lnum - 1
+                call add(outlines, current_outline)
+                let in_outline = 0
+            endif
+        endif
+        let lnum += 1
+    endwhile
+    if in_outline
+        let current_outline.end = num_lines
+        call add(outlines, current_outline)
+    endif
+
+    if empty(outlines)
+        return report
+    endif
+
+    " --- Step 2-5: Process each outline ---
+    for outline in outlines
+        let placeholders = {}
+        let table_headers = []
+        let examples_lnum = -1
+        let header_lnum = -1
+
+        " Find Examples: line and header line
+        for lnum_in_outline in range(outline.start, outline.end)
+            let line = buffer_lines[lnum_in_outline - 1]
+            if line =~ '^\s*Examples:'
+                let examples_lnum = lnum_in_outline
+                let header_lnum_candidate = lnum_in_outline + 1
+                while header_lnum_candidate <= outline.end
+                    let header_line = buffer_lines[header_lnum_candidate - 1]
+                    if header_line =~ '^\s*|.*|$'
+                        let header_lnum = header_lnum_candidate
+                        break
+                    elseif header_line !~ '^\s*$' && header_line !~ '^\s*#'
+                        break
+                    endif
+                    let header_lnum_candidate += 1
+                endwhile
+                break
+            endif
+        endfor
+
+        if header_lnum == -1
+            continue
+        endif
+
+        " Parse headers
+        let header_line_content = buffer_lines[header_lnum - 1]
+        let parts = split(header_line_content, '|')
+        for part in parts
+            let header = s:trim(part)
+            if !empty(header)
+                call add(table_headers, header)
+            endif
+        endfor
+
+        " Find all placeholders used in the outline body
+        let placeholder_pattern = '<\([^>]\+\)>'
+        let end_of_steps = (examples_lnum > -1) ? examples_lnum - 1 : outline.end
+        for lnum_in_steps in range(outline.start, end_of_steps)
+            let line = buffer_lines[lnum_in_steps - 1]
+            let match_start = 0
+            while match_start >= 0
+                let match_idx = match(line, placeholder_pattern, match_start)
+                if match_idx != -1
+                    let placeholder = matchstr(line, placeholder_pattern, match_idx)
+                    let var_name = placeholder[1:-2]
+                    if !has_key(placeholders, var_name)
+                        let placeholders[var_name] = lnum_in_steps
+                    endif
+                    let match_start = match_idx + len(placeholder)
+                else
+                    let match_start = -1
+                endif
+            endwhile
+        endfor
+
+        " Rule: Undefined Placeholder
+        if g:karate_linter_undefined_placeholder_rule
+            for used_var in keys(placeholders)
+                if index(table_headers, used_var) == -1
+                    let lnum_of_error = placeholders[used_var]
+                    let line_content = buffer_lines[lnum_of_error - 1]
+                    let pat = '<' . used_var . '>'
+                    let col = match(line_content, pat)
+                    let end_col = col + len(pat)
+
+                    call add(report, {
+                        \ 'lnum': lnum_of_error,
+                        \ 'col': col + 1,
+                        \ 'end_col': end_col + 1,
+                        \ 'text': "Placeholder '<" . used_var . ">' is not defined in the Examples table.",
+                        \ 'level': g:karate_linter_undefined_placeholder_level
+                        \ })
+                endif
+            endfor
+        endif
+
+        " Rule: Unused Header
+        if g:karate_linter_unused_header_rule
+            let used_vars = keys(placeholders)
+            for header in table_headers
+                if index(used_vars, header) == -1
+                    let lnum_of_error = header_lnum
+                    let line_content = buffer_lines[lnum_of_error - 1]
+                    let pat = '\<'.header.'\>'
+                    let col = match(line_content, pat)
+                    let start_col = (col > -1) ? col + 1 : 1
+                    let end_col = start_col + len(header)
+                    call add(report, {
+                        \ 'lnum': lnum_of_error,
+                        \ 'col': start_col,
+                        \ 'end_col': end_col,
+                        \ 'text': "Header '" . header . "' is defined in the Examples table but not used in the Scenario Outline.",
+                        \ 'level': g:karate_linter_unused_header_level
+                        \ })
+                endif
+            endfor
+        endif
+    endfor
+
+    return report
 endfunction
 
 function! s:run_linter_and_show_loclist()
