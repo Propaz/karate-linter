@@ -164,7 +164,7 @@ function! s:generate_lint_report()
     if g:karate_linter_unclosed_docstring_rule
         let lnum = s:find_unclosed_docstring()
         if lnum > 0
-            call s:AddLineDiag(report, l:processed_lines, lnum, 'Unclosed DocString (odd number of """). Last one found here.', g:karate_linter_unclosed_docstring_level)
+            call s:AddLineDiag(report, l:processed_lines, lnum, 'Unclosed DocString. Block started here.', g:karate_linter_unclosed_docstring_level)
         endif
     endif
 
@@ -395,47 +395,39 @@ function! s:find_unused_variables()
 endfunction
 
 function! s:find_unclosed_docstring_vim()
-  " This is the original pure Vimscript implementation.
-  let l:last_occurrence_line = 0
-  let l:count = 0
-  for l:line_num in range(1, line('$'))
-    let l:line_text = getline(l:line_num)
-    let l:occurrences_in_line = len(split(l:line_text, '"""', 1)) - 1
+  let in_docstring = 0
+  let start_lnum = 0
 
-    if l:occurrences_in_line > 0
-      let l:count += l:occurrences_in_line
-      let l:last_occurrence_line = l:line_num
+  for lnum in range(1, line('$'))
+    let line = getline(lnum)
+
+    if in_docstring && line =~ '^\s*\(\* def\|Scenario:\|Scenario Outline:\|Feature:\|@\)'
+        return start_lnum
+    endif
+
+    let occurrences = len(split(line, '"""', 1)) - 1
+    if occurrences > 0
+        for _ in range(occurrences)
+            if in_docstring
+                let in_docstring = 0
+                let start_lnum = 0
+            else
+                let in_docstring = 1
+                let start_lnum = lnum
+            endif
+        endfor
     endif
   endfor
 
-  if l:count % 2 != 0
-    return l:last_occurrence_line
-  else
-    return 0
+  if in_docstring
+    return start_lnum
   endif
+
+  return 0
 endfunction
 
 function! s:find_unclosed_docstring()
-  " Use ripgrep for fast counting if available.
-  " Fallback to VimL implementation if rg is missing.
-  if !executable('rg')
-    return s:find_unclosed_docstring_vim()
-  endif
-
-  let buffer_content = getline(1, '$')
-  let content_string = join(buffer_content, "\n")
-
-  " systemlist() passes content_string to rg's stdin.
-  let matches = systemlist("rg --no-filename --line-number --fixed-strings '\"\"\'", content_string)
-
-  if len(matches) % 2 != 0 && !empty(matches)
-    let last_match = matches[-1]
-    " rg output format: "line_number:column:match"
-    let line_num_str = split(last_match, ':')[0]
-    return str2nr(line_num_str)
-  else
-    return 0
-  endif
+  return s:find_unclosed_docstring_vim()
 endfunction
 
 function! s:run_linter_and_show_loclist()
