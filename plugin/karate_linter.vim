@@ -90,6 +90,7 @@ endfunction
 function! s:generate_lint_report()
     let report = []
     let filename = bufname('%')
+    let buffer_lines = getline(1, '$')
 
     let s:simple_line_rules = [
         \  { 'name': 'tabs', 'pattern': '\t', 'text': 'Tabs are not allowed' },
@@ -131,7 +132,7 @@ function! s:generate_lint_report()
     endfor
 
     " --- Unused variable check ---
-    call extend(report, s:find_unused_variables())
+    call extend(report, s:find_unused_variables(buffer_lines))
 
     " --- Complex and multi-line rules (highlighting the whole line) ---
     let l:processed_lines = {} " Helper to avoid duplicate line highlights
@@ -152,14 +153,14 @@ function! s:generate_lint_report()
     endif
 
     if g:karate_linter_missing_examples_rule
-        let invalid_lines = s:find_invalid_outlines()
+        let invalid_lines = s:find_invalid_outlines(buffer_lines)
         for lnum in invalid_lines
             call s:AddLineDiag(report, l:processed_lines, lnum, "'Scenario Outline' without a corresponding 'Examples' block", g:karate_linter_missing_examples_level)
         endfor
     endif
 
     if g:karate_linter_orphaned_examples_rule
-        let invalid_lines = s:find_orphaned_examples()
+        let invalid_lines = s:find_orphaned_examples(buffer_lines)
         for lnum in invalid_lines
             call s:AddLineDiag(report, l:processed_lines, lnum, "Found 'orphaned' 'Examples' block without 'Scenario Outline'", g:karate_linter_orphaned_examples_level)
         endfor
@@ -173,11 +174,10 @@ function! s:generate_lint_report()
     endif
 
     if g:karate_linter_undefined_placeholder_rule || g:karate_linter_unused_header_rule
-        call extend(report, s:lint_scenario_outlines())
+        call extend(report, s:lint_scenario_outlines(buffer_lines))
     endif
 
     " --- File structure rules ---
-    let buffer_lines = getline(1, '$')
     if g:karate_linter_missing_feature_rule
       if empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
         call s:AddLineDiag(report, l:processed_lines, 1, "Missing mandatory 'Feature:' block in the file", g:karate_linter_missing_feature_level)
@@ -221,11 +221,11 @@ function! s:find_all_docstring_ranges()
     return ranges
 endfunction
 
-function! s:find_invalid_outlines_vim()
+function! s:find_invalid_outlines_vim(lines)
   let l:invalid_outline_lines = []
   let l:outline_start_line = 0
-  for l:line_num in range(1, line('$'))
-    let l:line_text = getline(l:line_num)
+  for l:line_num in range(1, len(a:lines))
+    let l:line_text = a:lines[l:line_num - 1]
     let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
     let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
     let l:is_tag = l:line_text =~ '^[ 	]*@'
@@ -254,9 +254,9 @@ function! s:find_invalid_outlines_vim()
   return l:invalid_outline_lines
 endfunction
 
-function! s:find_invalid_outlines()
+function! s:find_invalid_outlines(lines)
   if !executable('awk')
-    return s:find_invalid_outlines_vim()
+    return s:find_invalid_outlines_vim(a:lines)
   endif
 
   let awk_script = [
@@ -269,17 +269,17 @@ function! s:find_invalid_outlines()
   \ ]
   let awk_command = "awk '" . join(awk_script, " ") . "'"
 
-  let buffer_content = join(getline(1, '$'), "\n")
+  let buffer_content = join(a:lines, "\n")
   let output_lines = systemlist(awk_command, buffer_content)
 
   return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
 endfunction
 
-function! s:find_orphaned_examples_vim()
+function! s:find_orphaned_examples_vim(lines)
   let l:orphaned_lines = []
   let l:outline_context_active = 0 " Becomes 1 after 'Scenario Outline'
-  for l:line_num in range(1, line('$'))
-    let l:line_text = getline(l:line_num)
+  for l:line_num in range(1, len(a:lines))
+    let l:line_text = a:lines[l:line_num - 1]
 
     let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
     let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
@@ -309,9 +309,9 @@ function! s:find_orphaned_examples_vim()
   return l:orphaned_lines
 endfunction
 
-function! s:find_orphaned_examples()
+function! s:find_orphaned_examples(lines)
   if !executable('awk')
-    return s:find_orphaned_examples_vim()
+    return s:find_orphaned_examples_vim(a:lines)
   endif
 
   let awk_script = [
@@ -322,7 +322,7 @@ function! s:find_orphaned_examples()
   \ '/^[ 	]*Examples:/ { if (C) { C = 0 } else { print NR } }'
   \ ]
   let awk_command = "awk '" . join(awk_script, " ") . "'"
-  let buffer_content = join(getline(1, '$'), "\n")
+  let buffer_content = join(a:lines, "\n")
   let output_lines = systemlist(awk_command, buffer_content)
 
   return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
@@ -339,17 +339,16 @@ function! s:find_unclosed_reads()
     return invalid_lines
 endfunction
 
-function! s:find_unused_variables()
+function! s:find_unused_variables(lines)
     let report = []
     if !g:karate_linter_unused_variable_rule | return report | endif
 
-    let lines = getline(1, '$')
     let definitions = {}
 
     " Pass 1: Find all variable definitions
     let def_pattern = '^\s*\*\s*def\s\+\([a-zA-Z0-9_]\+\)'
-    for i in range(len(lines))
-        let line = lines[i]
+    for i in range(len(a:lines))
+        let line = a:lines[i]
         let match_list = matchlist(line, def_pattern)
         if !empty(match_list)
             let var_name = match_list[1]
@@ -367,11 +366,11 @@ function! s:find_unused_variables()
         let def_lnum = definitions[var_name]
         let usage_pattern = '\<'.var_name.'\>'
 
-        for i in range(len(lines))
+        for i in range(len(a:lines))
             " Don't count the definition line as a usage
             if (i + 1) == def_lnum | continue | endif
 
-            if lines[i] =~# usage_pattern
+            if a:lines[i] =~# usage_pattern
                 let is_used = 1
                 break
             endif
@@ -442,10 +441,9 @@ function! s:trim(text)
     return substitute(a:text, '^\s*\|\s*$', '', 'g')
 endfunction
 
-function! s:lint_scenario_outlines()
+function! s:lint_scenario_outlines(buffer_lines)
     let report = []
-    let buffer_lines = getline(1, '$')
-    let num_lines = len(buffer_lines)
+    let num_lines = len(a:buffer_lines)
 
     " --- Step 1: Find all Scenario Outline blocks ---
     let outlines = []
@@ -453,7 +451,7 @@ function! s:lint_scenario_outlines()
     let in_outline = 0
     let lnum = 1
     while lnum <= num_lines
-        let line = buffer_lines[lnum - 1]
+        let line = a:buffer_lines[lnum - 1]
 
         if line =~ '^\s*Scenario Outline:'
             if in_outline
@@ -489,12 +487,12 @@ function! s:lint_scenario_outlines()
 
         " Find Examples: line and header line
         for lnum_in_outline in range(outline.start, outline.end)
-            let line = buffer_lines[lnum_in_outline - 1]
+            let line = a:buffer_lines[lnum_in_outline - 1]
             if line =~ '^\s*Examples:'
                 let examples_lnum = lnum_in_outline
                 let header_lnum_candidate = lnum_in_outline + 1
                 while header_lnum_candidate <= outline.end
-                    let header_line = buffer_lines[header_lnum_candidate - 1]
+                    let header_line = a:buffer_lines[header_lnum_candidate - 1]
                     if header_line =~ '^\s*|.*|$'
                         let header_lnum = header_lnum_candidate
                         break
@@ -512,7 +510,7 @@ function! s:lint_scenario_outlines()
         endif
 
         " Parse headers
-        let header_line_content = buffer_lines[header_lnum - 1]
+        let header_line_content = a:buffer_lines[header_lnum - 1]
         let parts = split(header_line_content, '|')
         for part in parts
             let header = s:trim(part)
@@ -525,7 +523,7 @@ function! s:lint_scenario_outlines()
         let placeholder_pattern = '<\([^>]\+\)>'
         let end_of_steps = (examples_lnum > -1) ? examples_lnum - 1 : outline.end
         for lnum_in_steps in range(outline.start, end_of_steps)
-            let line = buffer_lines[lnum_in_steps - 1]
+            let line = a:buffer_lines[lnum_in_steps - 1]
             let match_start = 0
             while match_start >= 0
                 let match_idx = match(line, placeholder_pattern, match_start)
@@ -547,7 +545,7 @@ function! s:lint_scenario_outlines()
             for used_var in keys(placeholders)
                 if index(table_headers, used_var) == -1
                     let lnum_of_error = placeholders[used_var]
-                    let line_content = buffer_lines[lnum_of_error - 1]
+                    let line_content = a:buffer_lines[lnum_of_error - 1]
                     let pat = '<' . used_var . '>'
                     let col = match(line_content, pat)
                     let end_col = col + len(pat)
@@ -569,7 +567,7 @@ function! s:lint_scenario_outlines()
             for header in table_headers
                 if index(used_vars, header) == -1
                     let lnum_of_error = header_lnum
-                    let line_content = buffer_lines[lnum_of_error - 1]
+                    let line_content = a:buffer_lines[lnum_of_error - 1]
                     let pat = '\<'.header.'\>'
                     let col = match(line_content, pat)
                     let start_col = (col > -1) ? col + 1 : 1
