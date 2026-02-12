@@ -520,7 +520,7 @@ function! s:lint_scenario_outlines(buffer_lines)
         endfor
 
         " Find all placeholders used in the outline body
-        let placeholder_pattern = '<\([^>]\+\)>'
+        let placeholder_pattern = '<\([^<>]\+\)>'
         let end_of_steps = (examples_lnum > -1) ? examples_lnum - 1 : outline.end
         for lnum_in_steps in range(outline.start, end_of_steps)
             let line = a:buffer_lines[lnum_in_steps - 1]
