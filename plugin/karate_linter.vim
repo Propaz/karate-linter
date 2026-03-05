@@ -41,7 +41,9 @@ let s:defaults = {
     \ 'karate_linter_undefined_placeholder_rule': 1,
     \ 'karate_linter_undefined_placeholder_level': 'KarateLintError',
     \ 'karate_linter_unused_header_rule': 1,
-    \ 'karate_linter_unused_header_level': 'KarateLintWarn'
+    \ 'karate_linter_unused_header_level': 'KarateLintWarn',
+    \ 'karate_linter_undefined_request_var_rule': 1,
+    \ 'karate_linter_undefined_request_var_level': 'KarateLintError'
     \ }
 
 for var_name in keys(s:defaults)
@@ -176,6 +178,8 @@ function! s:generate_lint_report()
     if g:karate_linter_undefined_placeholder_rule || g:karate_linter_unused_header_rule
         call extend(report, s:lint_scenario_outlines(buffer_lines))
     endif
+
+    call extend(report, s:lint_undefined_request_variables(buffer_lines))
 
     " --- File structure rules ---
     if g:karate_linter_missing_feature_rule
@@ -581,6 +585,48 @@ function! s:lint_scenario_outlines(buffer_lines)
                         \ })
                 endif
             endfor
+        endif
+    endfor
+
+    return report
+endfunction
+
+function! s:lint_undefined_request_variables(lines)
+    let report = []
+    if !g:karate_linter_undefined_request_var_rule | return report | endif
+
+    let defined_vars = {} " Using a dictionary as a set
+
+    let def_pattern = '^\s*\*\s*def\s\+\([a-zA-Z0-9_]\+\)'
+    let request_pattern = '^\s*\(And\|Given\|When\|Then\|\*\)\s\+request\s\+\([a-zA-Z0-9_]\+\)\s*\(#.*\)\?$'
+
+    for lnum in range(1, len(a:lines))
+        let line = a:lines[lnum - 1]
+
+        " Check for 'request' usage FIRST
+        let req_match = matchlist(line, request_pattern)
+        if !empty(req_match)
+            let var_name = req_match[2]
+            if !has_key(defined_vars, var_name)
+                " It's an error. Find column for highlighting.
+                let line_part_before_var = matchstr(line, '^\s*\(And\|Given\|When\|Then\|\*\)\s\+request\s\+')
+                let col = len(line_part_before_var)
+
+                call add(report, {
+                    \ 'lnum': lnum,
+                    \ 'col': col + 1,
+                    \ 'end_col': col + 1 + len(var_name),
+                    \ 'text': "Variable '" . var_name . "' used with 'request' is not defined before this line.",
+                    \ 'level': g:karate_linter_undefined_request_var_level
+                    \ })
+            endif
+        endif
+
+        " THEN check for definition, so it's available for the next lines
+        let def_match = matchlist(line, def_pattern)
+        if !empty(def_match)
+            let var_name = def_match[1]
+            let defined_vars[var_name] = 1
         endif
     endfor
 
