@@ -867,6 +867,27 @@ endfunction
 command! -nargs=0 KarateFmtJson call s:format_json_in_docstring()
 
 
+function! s:replace_tabs_with_spaces()
+    " Save cursor and view to prevent screen jump
+    let l:save_cursor = getcurpos()
+    let l:view = winsaveview()
+
+    " Get number of spaces from shiftwidth, default to 4 if it's 0
+    let l:num_spaces = &shiftwidth > 0 ? &shiftwidth : 4
+    let l:space_string = repeat(' ', l:num_spaces)
+
+    " Perform replacement
+    silent! execute '%s/\t/' . l:space_string . '/g'
+
+    " Restore view and cursor
+    call winrestview(l:view)
+    call setpos('.', l:save_cursor)
+    echom "[Karate] Replaced tabs with spaces."
+endfunction
+
+command! KarateTabsToSpaces call s:replace_tabs_with_spaces()
+
+
 augroup KarateLinter
   autocmd!
   " Clear diagnostics when leaving the buffer
