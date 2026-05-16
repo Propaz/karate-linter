@@ -19,7 +19,7 @@ Install using [vim-plug](https://github.com/junegunn/vim-plug):
 
 ```vim
 " Make sure you have ripgrep and awk for the best performance
-Plug 'Propaz/karate_linter'
+Plug 'Propaz/karate-linter'
 ```
 
 Then run `:PlugInstall` in Vim.
