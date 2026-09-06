@@ -1,0 +1,8 @@
+# The plugin and test scripts are plain text, normalised to LF.
+* text=auto eol=lf
+
+# Fixtures and the recorded baseline are compared byte for byte: tabs,
+# trailing spaces and line endings are part of what is under test, so git
+# must never rewrite them.
+tests/fixtures/** -text
+tests/baseline.*.txt -text
