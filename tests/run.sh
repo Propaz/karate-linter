@@ -50,6 +50,12 @@ sed 's/^/  /' tests/echo.txt
 grep -q 'RESULT: ALL OK' tests/echo.txt || status=1
 
 echo
+echo "== location list =="
+"$VIM" -Nu NONE -es -S tests/check_loclist.vim
+sed 's/^/  /' tests/loclist.txt
+grep -q 'RESULT: ALL OK' tests/loclist.txt || status=1
+
+echo
 echo "== option handling =="
 opt_case() {
     local label="$1" expect="$2"; shift 2

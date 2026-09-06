@@ -72,7 +72,22 @@ The message for the line under the cursor is shown in the command line; see [See
 The plugin provides several commands that you can run manually:
 
 -   `:KarateLintCheck`
-    -   Runs the linter on the entire file and displays the results in a location list (`:lopen`). This is useful for reviewing all issues in one place.
+    -   Runs the linter on the entire file and opens the results in a location list, for reviewing every issue in one place — and for jumping between them.
+
+    The list is ordered the way the file reads, top to bottom, and each entry
+    points at the buffer it came from:
+
+    | | |
+    |---|---|
+    | `<CR>` | jump to the entry under the cursor |
+    | `:lnext` / `:lprevious` | next / previous issue, without leaving the file |
+    | `:lfirst` / `:llast` | first / last issue |
+    | `:lclose` | close the list |
+
+    The list opens with the first issue at or after your cursor already
+    selected, so `<CR>` goes where you were looking. Re-running the command
+    rebuilds the list; if nothing is left to report it closes the window rather
+    than leaving entries that no longer match the file.
 
 -   `:KarateFmtJson`
     -   Formats the JSON content within a docstring (`"""..."""`) block. The cursor must be inside the block you wish to format. It uses `jq` or `python -m json.tool` if available.
@@ -193,7 +208,8 @@ Details worth knowing:
     cursor is already on — which produces no cursor movement — the message is
     refreshed once the debounce timer has run.
 
-`:KarateLintCheck` still opens the full list in the location list.
+`:KarateLintCheck` still opens the full list in the location list, where
+`<CR>` and `:lnext` jump between the findings.
 
 ### Docstrings and rule scope
 

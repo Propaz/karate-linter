@@ -141,6 +141,7 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | `str[i]` is a byte in Vim9 | It is a character. Use `strpart(str, i, 1)`. |
 | `matchstrlist()` returns one match per line | It returns all of them, with `idx` and `byteidx`. |
 | `prop_add_list()` end column | Exclusive, equal to `col + length` — verified against `prop_add()` before relying on it. |
+| A quickfix item's `filename` always jumps | It is resolved against the current directory, so for an unnamed buffer the entry is still `valid: 1` but jumping does nothing at all. Use `bufnr`. |
 
 The pattern for a probe: write a small script that prints results with
 `writefile()`, run it with `vim -Nu NONE -es -S`, read the file.

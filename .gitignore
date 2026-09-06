@@ -5,3 +5,4 @@
 tests/after.*.txt
 tests/diagnostics.txt
 tests/echo.txt
+tests/loclist.txt

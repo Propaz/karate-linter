@@ -1385,16 +1385,32 @@ enddef
 # --- Commands ------------------------------------------------------------
 
 export def ShowLoclist()
+  # The location window itself is a buffer too. Without this guard, running
+  # the command a second time while the list has focus lints the list.
+  if !empty(&buftype)
+    echomsg '[Karate] KarateLintCheck needs a file buffer.'
+    return
+  endif
+
   var report = GenerateReport()
   if empty(report)
+    # Replace the previous list instead of leaving it behind: its line
+    # numbers describe a file that has since been fixed, so jumping from it
+    # would land on the wrong lines.
+    setloclist(0, [], ' ', {items: [], title: 'Karate lint'})
+    lclose
     echomsg '[Karate] No issues found.'
     return
   endif
 
+  # Point at the buffer, not at its name. A name is resolved against the
+  # current directory when jumping, so an unnamed buffer - or one opened
+  # before a :cd - silently refuses to move; a buffer number always lands.
+  var source = bufnr('%')
   var items: list<dict<any>> = []
   for issue in report
     add(items, {
-      filename: bufname('%'),
+      bufnr: source,
       lnum: issue.lnum,
       col: issue.col,
       text: issue.text,
@@ -1402,7 +1418,24 @@ export def ShowLoclist()
     })
   endfor
 
-  setloclist(0, [], ' ', {items: items, title: 'Karate lint'})
+  # The report is assembled rule by rule, so in its natural order the list
+  # jumps around the file. Sorted by position it reads top to bottom, and
+  # :lnext / :lprevious walk the file in order. sort() is stable, so findings
+  # sharing a position keep the order the rules produced them in.
+  sort(items, (a, b) => a.lnum == b.lnum ? a.col - b.col : a.lnum - b.lnum)
+
+  # Select the first entry at or after the cursor so the list opens on the
+  # problem that was on screen, and <CR> is useful without hunting for it.
+  var cursor_lnum = line('.')
+  var idx = len(items)
+  for i in range(len(items))
+    if items[i].lnum >= cursor_lnum
+      idx = i + 1
+      break
+    endif
+  endfor
+
+  setloclist(0, [], ' ', {items: items, idx: idx, title: 'Karate lint'})
   lopen
 enddef
 
