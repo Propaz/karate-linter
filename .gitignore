@@ -1,1 +1,7 @@
 *.feature
+!tests/fixtures/*.feature
+
+# transient test output; tests/baseline.*.txt is the committed contract
+tests/after.*.txt
+tests/diagnostics.txt
+tests/echo.txt

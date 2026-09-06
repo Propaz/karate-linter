@@ -4,6 +4,16 @@
 if exists("g:loaded_karate_linter")
   finish
 endif
+
+" matchstrlist() (used by the unused-variable scan) landed in Vim 9.1.0009.
+" Fail loudly here instead of throwing E117 on the first lint.
+if !has('patch-9.1.9')
+  echohl WarningMsg
+  echomsg '[Karate] karate_linter.vim requires Vim 9.1.0009 or newer.'
+  echohl NONE
+  finish
+endif
+
 let g:loaded_karate_linter = 1
 
 
@@ -24,8 +34,20 @@ let s:defaults = {
     \ 'karate_linter_missing_examples_level': 'KarateLintError',
     \ 'karate_linter_call_read_space_rule': 1,
     \ 'karate_linter_call_read_space_level': 'KarateLintError',
-    \ 'karate_linter_unclosed_read_rule': 1,
-    \ 'karate_linter_unclosed_read_level': 'KarateLintError',
+    \ 'karate_linter_unbalanced_parens_rule': 1,
+    \ 'karate_linter_unbalanced_parens_level': 'KarateLintError',
+    \ 'karate_linter_unterminated_string_rule': 1,
+    \ 'karate_linter_unterminated_string_level': 'KarateLintError',
+    \ 'karate_linter_examples_table_rule': 1,
+    \ 'karate_linter_examples_table_level': 'KarateLintError',
+    \ 'karate_linter_duplicate_feature_rule': 1,
+    \ 'karate_linter_duplicate_feature_level': 'KarateLintError',
+    \ 'karate_linter_background_placement_rule': 1,
+    \ 'karate_linter_background_placement_level': 'KarateLintError',
+    \ 'karate_linter_duplicate_scenario_name_rule': 1,
+    \ 'karate_linter_duplicate_scenario_name_level': 'KarateLintWarn',
+    \ 'karate_linter_placeholder_outside_outline_rule': 1,
+    \ 'karate_linter_placeholder_outside_outline_level': 'KarateLintWarn',
     \ 'karate_linter_orphaned_examples_rule': 1,
     \ 'karate_linter_orphaned_examples_level': 'KarateLintError',
     \ 'karate_linter_unclosed_docstring_rule': 1,
@@ -43,8 +65,21 @@ let s:defaults = {
     \ 'karate_linter_unused_header_rule': 1,
     \ 'karate_linter_unused_header_level': 'KarateLintWarn',
     \ 'karate_linter_undefined_request_var_rule': 1,
-    \ 'karate_linter_undefined_request_var_level': 'KarateLintError'
+    \ 'karate_linter_undefined_request_var_level': 'KarateLintError',
+    \ 'karate_linter_debounce_ms': 150,
+    \ 'karate_linter_echo_cursor': 1
     \ }
+
+" Back-compat: the unbalanced-parenthesis check grew out of the old
+" read()-only rule and replaces it. An explicit setting of the old option is
+" carried over, so existing vimrcs keep working; it must run before the
+" defaults below so the alias wins over the default value.
+if exists('g:karate_linter_unclosed_read_rule') && !exists('g:karate_linter_unbalanced_parens_rule')
+    let g:karate_linter_unbalanced_parens_rule = g:karate_linter_unclosed_read_rule
+endif
+if exists('g:karate_linter_unclosed_read_level') && !exists('g:karate_linter_unbalanced_parens_level')
+    let g:karate_linter_unbalanced_parens_level = g:karate_linter_unclosed_read_level
+endif
 
 for var_name in keys(s:defaults)
     if !exists('g:' . var_name)
@@ -76,143 +111,315 @@ let s:sign_id = 1000 " Starting sign ID for this plugin
 " --- END CONFIGURATION ---
 
 
-function! s:AddLineDiag(report, processed_lines, lnum, text, level)
-    if has_key(a:processed_lines, a:lnum) | return | endif
-    let line_content = getline(a:lnum)
-    if empty(line_content) | return | endif
+" Built once at load time instead of on every lint pass.
+" 'pattern'      - decides where the diagnostic is anchored (column range).
+" 'line_pattern' - optional pre-filter deciding whether the rule applies at all.
+" 'in_docstring' - set when the rule still applies inside a docstring body.
+"                  Docstring bodies are arbitrary JSON/JS/XML payload, not
+"                  Karate syntax, so by default rules stay out of them.
+"                  Tabs are the exception: they break indentation anywhere.
+let s:SIMPLE_LINE_RULES = [
+    \  { 'name': 'tabs', 'pattern': '\t', 'text': 'Tabs are not allowed', 'in_docstring': 1 },
+    \  { 'name': 'trailing_space', 'pattern': '\s\+$', 'text': 'Trailing whitespace' },
+    \  { 'name': 'and_but', 'pattern': 'But', 'line_pattern': '^\s*But\s', 'text': "Use 'And' instead of 'But' for consistency" },
+    \  { 'name': 'no_space_after_keyword', 'pattern': '^\s*\zs\(\*\|Given\|When\|Then\|And\|But\)\S', 'text': 'Missing space after keyword (Given, When, Then, etc.)' },
+    \  { 'name': 'call_read_space', 'pattern': '\<callread(', 'text': "Use 'call read' instead of 'callread'" },
+    \ ]
+lockvar! s:SIMPLE_LINE_RULES
+
+
+" True when a:pattern matches at least one line that is not docstring payload.
+" Keeps match()'s early exit: it restarts the search past a docstring hit
+" instead of walking the whole buffer.
+function! s:has_line_outside_docstring(lines, pattern, docstring_body)
+    let idx = 0
+    while 1
+        let idx = match(a:lines, a:pattern, idx)
+        if idx < 0 | return 0 | endif
+        if !has_key(a:docstring_body, idx + 1) | return 1 | endif
+        let idx += 1
+    endwhile
+endfunction
+
+
+" Anchors a whole-line diagnostic.
+"
+" There is deliberately no 'already reported this line' set any more. It was
+" meant to avoid stacking highlights, but two different problems on one line
+" are two findings: it silently hid "Missing 'Scenario:'" whenever 'Feature:'
+" was missing too, because both anchor to the same line.
+"
+" An empty anchor line still gets a one-cell span. Previously such a
+" diagnostic was dropped outright, so a file that merely started with a blank
+" line reported none of its structural problems.
+function! s:AddLineDiag(report, lines, lnum, text, level)
+    let line_content = get(a:lines, a:lnum - 1, '')
     let start_byte = match(line_content, '\S')
     let start_col = (start_byte > -1) ? (start_byte + 1) : 1
     call add(a:report, {
-        \ 'lnum': a:lnum, 'col': start_col, 'end_col': len(line_content) + 1,
+        \ 'lnum': a:lnum,
+        \ 'col': start_col,
+        \ 'end_col': max([len(line_content) + 1, start_col + 1]),
         \ 'text': a:text, 'level': a:level })
-    let a:processed_lines[a:lnum] = 1
+endfunction
+
+" Where a file-level diagnostic should point: the first line with any content,
+" so the highlight lands on real text rather than on leading blank lines.
+function! s:first_content_line(lines)
+    let idx = match(a:lines, '\S')
+    return idx < 0 ? 1 : idx + 1
+endfunction
+
+
+" File-level skeleton checks, all in one pass: a second 'Feature:', a
+" 'Background:' in the wrong place or repeated, repeated scenario names, and
+" '<placeholder>' left in a plain Scenario where nothing will substitute it.
+function! s:lint_structure(lines, docstring_body)
+    let report = []
+    let dup_feature = g:karate_linter_duplicate_feature_rule
+    let background = g:karate_linter_background_placement_rule
+    let dup_name = g:karate_linter_duplicate_scenario_name_rule
+    let stray_placeholder = g:karate_linter_placeholder_outside_outline_rule
+    if !dup_feature && !background && !dup_name && !stray_placeholder
+        return report
+    endif
+
+    let step_pattern = '\C^\s*\%(\*\|Given\|When\|Then\|And\|But\)\s'
+    let feature_seen = 0
+    let background_lnum = 0
+    let scenario_seen = 0
+    let in_plain_scenario = 0
+    let names = {}
+    let lnum = 0
+
+    for line in a:lines
+        let lnum += 1
+        if has_key(a:docstring_body, lnum) | continue | endif
+
+        if line =~# '\C^\s*Feature:'
+            let in_plain_scenario = 0
+            if feature_seen && dup_feature
+                call s:AddLineDiag(report, a:lines, lnum,
+                    \ "Duplicate 'Feature:' block; a feature file declares exactly one",
+                    \ g:karate_linter_duplicate_feature_level)
+            endif
+            let feature_seen = 1
+            continue
+        endif
+
+        if line =~# '\C^\s*Background:'
+            let in_plain_scenario = 0
+            if background
+                if background_lnum > 0
+                    call s:AddLineDiag(report, a:lines, lnum,
+                        \ printf("Duplicate 'Background:' block (the first one is on line %d)", background_lnum),
+                        \ g:karate_linter_background_placement_level)
+                elseif scenario_seen
+                    call s:AddLineDiag(report, a:lines, lnum,
+                        \ "'Background:' must come before the first 'Scenario:'",
+                        \ g:karate_linter_background_placement_level)
+                endif
+            endif
+            if background_lnum == 0 | let background_lnum = lnum | endif
+            continue
+        endif
+
+        if line =~# '\C^\s*@'
+            let in_plain_scenario = 0
+            continue
+        endif
+
+        let title = matchlist(line, '\C^\s*Scenario\%( Outline\)\?:\s*\(.\{-}\)\s*$')
+        if !empty(title)
+            let scenario_seen = 1
+            let in_plain_scenario = line !~# '\C^\s*Scenario Outline:'
+
+            if dup_name && !empty(title[1])
+                if has_key(names, title[1])
+                    call s:AddLineDiag(report, a:lines, lnum,
+                        \ printf("Duplicate scenario name '%s' (first used on line %d)", title[1], names[title[1]]),
+                        \ g:karate_linter_duplicate_scenario_name_level)
+                else
+                    let names[title[1]] = lnum
+                endif
+            endif
+            continue
+        endif
+
+        " A '<name>' in a plain Scenario is never substituted - it is almost
+        " always a step copied out of a Scenario Outline.
+        "
+        " Only identifier-shaped names count, and a line carrying '</' or '/>'
+        " is left alone: Karate allows inline XML such as
+        " '* def body = <root>text</root>', whose tags are not placeholders.
+        if stray_placeholder && in_plain_scenario && line =~# step_pattern
+            \ && stridx(line, '<') >= 0
+            \ && stridx(line, '</') < 0 && stridx(line, '/>') < 0
+            let start = 0
+            while 1
+                let [text, from, to] = matchstrpos(line, '<[A-Za-z_][A-Za-z0-9_]*>', start)
+                if from < 0 | break | endif
+                call add(report, {
+                    \ 'lnum': lnum, 'col': from + 1, 'end_col': to + 1,
+                    \ 'text': printf("Placeholder '%s' in a plain Scenario is never substituted; use 'Scenario Outline'", text),
+                    \ 'level': g:karate_linter_placeholder_outside_outline_level })
+                let start = to
+            endwhile
+        endif
+    endfor
+
+    return report
 endfunction
 
 
 function! s:generate_lint_report()
     let report = []
-    let filename = bufname('%')
+    " Read the buffer exactly once; every rule below works off this list.
     let buffer_lines = getline(1, '$')
 
-    let s:simple_line_rules = [
-        \  { 'name': 'tabs', 'pattern': '\t', 'text': 'Tabs are not allowed' },
-        \  { 'name': 'trailing_space', 'pattern': '\s\+$', 'text': 'Trailing whitespace' },
-        \  { 'name': 'and_but', 'pattern': 'But', 'line_pattern': '^\s*But\s', 'text': "Use 'And' instead of 'But' for consistency" },
-        \  { 'name': 'no_space_after_keyword', 'pattern': '^\s*\zs\(\*\|Given\|When\|Then\|And\|But\)\S', 'text': 'Missing space after keyword (Given, When, Then, etc.)' },
-        \  { 'name': 'call_read_space', 'pattern': '\bcallread(', 'text': "Use 'call read' instead of 'callread'" },
-        \ ]
+    " Resolve rule toggles/levels once instead of per line.
+    let active_rules = []
+    for rule in s:SIMPLE_LINE_RULES
+        if get(g:, 'karate_linter_' . rule.name . '_rule', 0)
+            call add(active_rules, {
+                \ 'pattern': rule.pattern,
+                \ 'line_pattern': get(rule, 'line_pattern', rule.pattern),
+                \ 'text': rule.text,
+                \ 'in_docstring': get(rule, 'in_docstring', 0),
+                \ 'level': get(g:, 'karate_linter_' . rule.name . '_level', 'KarateLintError') })
+        endif
+    endfor
+
+    let max_len = g:karate_linter_max_line_length
 
     " --- Simple rules (line-by-line check) ---
-    for lnum in range(1, line('$'))
-        let line = getline(lnum)
+    "
+    " This loop doubles as the single source of truth for docstring regions.
+    " Tracking the state here is free (the loop already visits every line) and
+    " every later rule reuses the map instead of re-scanning the buffer.
+    "
+    " The '"""' delimiters themselves count as Karate syntax, not as body, so
+    " trailing whitespace on a delimiter line is still reported.
+    let docstring_body = {}
+    let in_docstring = 0
+    let docstring_start = 0
+    let docstring_pattern = '^\s*"""\s*$'
+
+    let lnum = 0
+    for line in buffer_lines
+        let lnum += 1
+
+        let is_body = 0
+        if stridx(line, '"""') >= 0 && line =~# docstring_pattern
+            let in_docstring = !in_docstring
+            let docstring_start = in_docstring ? lnum : 0
+        elseif in_docstring
+            let is_body = 1
+            let docstring_body[lnum] = 1
+        endif
 
         " --- Data-driven simple rules ---
-        for rule in s:simple_line_rules
-            if get(g:, 'karate_linter_' . rule.name . '_rule', 0)
-                let line_pattern = get(rule, 'line_pattern', rule.pattern)
-                if line =~# line_pattern
-                    let pat = rule.pattern
-                    let match_byte_col = match(line, pat)
-                    if match_byte_col > -1
-                        let match_byte_len = len(matchstr(line, pat))
-                        let level = get(g:, 'karate_linter_' . rule.name . '_level', 'KarateLintError')
-                        call add(report, {
-                            \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                            \ 'text': rule.text, 'level': level })
-                    endif
+        for rule in active_rules
+            if is_body && !rule.in_docstring | continue | endif
+            if line =~# rule.line_pattern
+                " matchstrpos() gives position and length in one regex pass
+                " (was: =~# + match() + matchstr(), i.e. three passes).
+                let [mtext, mstart, mend] = matchstrpos(line, rule.pattern)
+                if mstart > -1
+                    call add(report, {
+                        \ 'lnum': lnum, 'col': mstart + 1, 'end_col': mend + 1,
+                        \ 'text': rule.text, 'level': rule.level })
                 endif
             endif
         endfor
 
-        " Rule: Max line length (byte-based check) - kept separate due to unique logic
-        if g:karate_linter_max_line_length > 0 && len(line) > g:karate_linter_max_line_length
+        " Rule: Max line length (byte-based check) - kept separate due to unique logic.
+        " Skipped inside docstrings: a long JSON line usually cannot be
+        " wrapped without changing the payload being sent.
+        if !is_body && max_len > 0 && len(line) > max_len
             call add(report, {
-                \ 'lnum': lnum, 'col': g:karate_linter_max_line_length + 1, 'end_col': len(line) + 1,
-                \ 'text': printf('Line is too long (%d > %d bytes)', len(line), g:karate_linter_max_line_length),
+                \ 'lnum': lnum, 'col': max_len + 1, 'end_col': len(line) + 1,
+                \ 'text': printf('Line is too long (%d > %d bytes)', len(line), max_len),
                 \ 'level': g:karate_linter_max_line_length_level })
         endif
     endfor
 
     " --- Unused variable check ---
-    call extend(report, s:find_unused_variables(buffer_lines))
+    call extend(report, s:find_unused_variables(buffer_lines, docstring_body))
 
     " --- Complex and multi-line rules (highlighting the whole line) ---
-    let l:processed_lines = {} " Helper to avoid duplicate line highlights
-
-    if g:karate_linter_unclosed_read_rule
-        let invalid_lines = s:find_unclosed_reads()
-        for lnum in invalid_lines
-            let line_content = getline(lnum)
-            let pat = '\<read\s*([^)]*$'
-            let match_byte_col = match(line_content, pat)
-            if match_byte_col > -1
-                let match_byte_len = len(matchstr(line_content, pat))
-                call add(report, {
-                    \ 'lnum': lnum, 'col': match_byte_col + 1, 'end_col': match_byte_col + 1 + match_byte_len,
-                    \ 'text': "Unclosed read() function", 'level': g:karate_linter_unclosed_read_level })
-            endif
-        endfor
-    endif
+    call extend(report, s:lint_delimiters(buffer_lines, docstring_body))
 
     if g:karate_linter_missing_examples_rule
-        let invalid_lines = s:find_invalid_outlines(buffer_lines)
+        let invalid_lines = s:find_invalid_outlines(buffer_lines, docstring_body)
         for lnum in invalid_lines
-            call s:AddLineDiag(report, l:processed_lines, lnum, "'Scenario Outline' without a corresponding 'Examples' block", g:karate_linter_missing_examples_level)
+            call s:AddLineDiag(report, buffer_lines, lnum, "'Scenario Outline' without a corresponding 'Examples' block", g:karate_linter_missing_examples_level)
         endfor
     endif
 
     if g:karate_linter_orphaned_examples_rule
-        let invalid_lines = s:find_orphaned_examples(buffer_lines)
+        let invalid_lines = s:find_orphaned_examples(buffer_lines, docstring_body)
         for lnum in invalid_lines
-            call s:AddLineDiag(report, l:processed_lines, lnum, "Found 'orphaned' 'Examples' block without 'Scenario Outline'", g:karate_linter_orphaned_examples_level)
+            call s:AddLineDiag(report, buffer_lines, lnum, "Found 'orphaned' 'Examples' block without 'Scenario Outline'", g:karate_linter_orphaned_examples_level)
         endfor
     endif
 
-    if g:karate_linter_unclosed_docstring_rule
-        let lnum = s:find_unclosed_docstring()
-        if lnum > 0
-            call s:AddLineDiag(report, l:processed_lines, lnum, 'Unclosed DocString. Block started here.', g:karate_linter_unclosed_docstring_level)
-        endif
+    " Derived from the docstring state tracked in the loop above: the block is
+    " unclosed only when its closing '"""' never turned up before EOF. The old
+    " code guessed instead - it declared the block unclosed as soon as a line
+    " inside it looked like a step ('* def', 'Scenario:', '@'), which fires on
+    " perfectly valid JSON and JS payloads.
+    if g:karate_linter_unclosed_docstring_rule && in_docstring && docstring_start > 0
+        call s:AddLineDiag(report, buffer_lines, docstring_start, 'Unclosed DocString. Block started here.', g:karate_linter_unclosed_docstring_level)
     endif
 
     if g:karate_linter_undefined_placeholder_rule || g:karate_linter_unused_header_rule
-        call extend(report, s:lint_scenario_outlines(buffer_lines))
+        \ || g:karate_linter_examples_table_rule
+        call extend(report, s:lint_scenario_outlines(buffer_lines, docstring_body))
     endif
 
-    call extend(report, s:lint_undefined_request_variables(buffer_lines))
+    call extend(report, s:lint_undefined_request_variables(buffer_lines, docstring_body))
+
+    call extend(report, s:lint_structure(buffer_lines, docstring_body))
 
     " --- File structure rules ---
-    if g:karate_linter_missing_feature_rule
-      if empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
-        call s:AddLineDiag(report, l:processed_lines, 1, "Missing mandatory 'Feature:' block in the file", g:karate_linter_missing_feature_level)
-      endif
-    endif
+    " match() on a List stops at the first hit and makes no copy, unlike the
+    " previous filter(copy(...)) which scanned the whole buffer six times.
+    if g:karate_linter_missing_feature_rule || g:karate_linter_missing_scenario_rule || g:karate_linter_missing_background_rule
+      let anchor = s:first_content_line(buffer_lines)
+      let has_feature = s:has_line_outside_docstring(buffer_lines, '^\s*Feature:', docstring_body)
+      let has_scenario = s:has_line_outside_docstring(buffer_lines, '^\s*Scenario Outline:', docstring_body)
+          \ || s:has_line_outside_docstring(buffer_lines, '^\s*Scenario:', docstring_body)
 
-    if g:karate_linter_missing_scenario_rule
-      if empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario Outline:''')) && empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario:'''))
-        call s:AddLineDiag(report, l:processed_lines, 1, "Missing 'Scenario:' or 'Scenario Outline:' blocks in the file", g:karate_linter_missing_scenario_level)
+      if g:karate_linter_missing_feature_rule && !has_feature
+        call s:AddLineDiag(report, buffer_lines, anchor, "Missing mandatory 'Feature:' block in the file", g:karate_linter_missing_feature_level)
       endif
-    endif
 
-    if g:karate_linter_missing_background_rule
-      let has_feature = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Feature:'''))
-      let has_scenario = !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario Outline:''')) || !empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Scenario:'''))
-      if has_feature && has_scenario && empty(filter(copy(buffer_lines), 'v:val =~ ''^\s*Background:'''))
-        call s:AddLineDiag(report, l:processed_lines, 1, "Missing 'Background' block", g:karate_linter_missing_background_level)
+      if g:karate_linter_missing_scenario_rule && !has_scenario
+        call s:AddLineDiag(report, buffer_lines, anchor, "Missing 'Scenario:' or 'Scenario Outline:' blocks in the file", g:karate_linter_missing_scenario_level)
+      endif
+
+      if g:karate_linter_missing_background_rule && has_feature && has_scenario
+        if !s:has_line_outside_docstring(buffer_lines, '^\s*Background:', docstring_body)
+          call s:AddLineDiag(report, buffer_lines, anchor, "Missing 'Background' block", g:karate_linter_missing_background_level)
+        endif
       endif
     endif
 
     return report
 endfunction
 
-function! s:find_all_docstring_ranges()
+function! s:find_all_docstring_ranges(lines)
     let ranges = []
     let in_docstring = 0
     let start_lnum = 0
     let docstring_pattern = '^\s*"""\s*$'
+    let lnum = 0
 
-    for lnum in range(1, line('$'))
-        if getline(lnum) =~# docstring_pattern
+    for line in a:lines
+        let lnum += 1
+        if stridx(line, '"""') < 0 | continue | endif
+        if line =~# docstring_pattern
             if !in_docstring
                 let start_lnum = lnum
                 let in_docstring = 1
@@ -225,15 +432,20 @@ function! s:find_all_docstring_ranges()
     return ranges
 endfunction
 
-function! s:find_invalid_outlines_vim(lines)
+
+" Pure Vim, no subprocess. Previously this shelled out to awk on every single
+" keystroke; the \C prefixes keep it case-sensitive exactly like awk was,
+" regardless of the user's 'ignorecase'.
+function! s:find_invalid_outlines(lines, docstring_body)
   let l:invalid_outline_lines = []
   let l:outline_start_line = 0
   for l:line_num in range(1, len(a:lines))
+    if has_key(a:docstring_body, l:line_num) | continue | endif
     let l:line_text = a:lines[l:line_num - 1]
-    let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
-    let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
-    let l:is_tag = l:line_text =~ '^[ 	]*@'
-    let l:is_examples = l:line_text =~ '^[ 	]*Examples:'
+    let l:is_outline = l:line_text =~# '\C^[ 	]*Scenario Outline:'
+    let l:is_normal_scenario = l:line_text =~# '\C^[ 	]*Scenario:' && !l:is_outline
+    let l:is_tag = l:line_text =~# '\C^[ 	]*@'
+    let l:is_examples = l:line_text =~# '\C^[ 	]*Examples:'
     if l:is_normal_scenario || l:is_tag
       if l:outline_start_line > 0
         call add(l:invalid_outline_lines, l:outline_start_line)
@@ -258,37 +470,18 @@ function! s:find_invalid_outlines_vim(lines)
   return l:invalid_outline_lines
 endfunction
 
-function! s:find_invalid_outlines(lines)
-  if !executable('awk')
-    return s:find_invalid_outlines_vim(a:lines)
-  endif
-
-  let awk_script = [
-  \ 'BEGIN { O = 0 }',
-  \ '/^[ 	]*Scenario Outline:/ { if (O > 0) { print O }; O = NR }',
-  \ '/^[ 	]*Scenario:/ && !/^[ 	]*Scenario Outline:/ { if (O > 0) { print O; O = 0 } }',
-  \ '/^[ 	]*@/ { if (O > 0) { print O; O = 0 } }',
-  \ '/^[ 	]*Examples:/ { O = 0 }',
-  \ 'END { if (O > 0) { print O } }'
-  \ ]
-  let awk_command = "awk '" . join(awk_script, " ") . "'"
-
-  let buffer_content = join(a:lines, "\n")
-  let output_lines = systemlist(awk_command, buffer_content)
-
-  return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
-endfunction
-
-function! s:find_orphaned_examples_vim(lines)
+" Pure Vim, no subprocess. See the note on s:find_invalid_outlines().
+function! s:find_orphaned_examples(lines, docstring_body)
   let l:orphaned_lines = []
   let l:outline_context_active = 0 " Becomes 1 after 'Scenario Outline'
   for l:line_num in range(1, len(a:lines))
+    if has_key(a:docstring_body, l:line_num) | continue | endif
     let l:line_text = a:lines[l:line_num - 1]
 
-    let l:is_outline = l:line_text =~ '^[ 	]*Scenario Outline:'
-    let l:is_normal_scenario = l:line_text =~ '^[ 	]*Scenario:' && !l:is_outline
-    let l:is_tag = l:line_text =~ '^[ 	]*@'
-    let l:is_examples = l:line_text =~ '^[ 	]*Examples:'
+    let l:is_outline = l:line_text =~# '\C^[ 	]*Scenario Outline:'
+    let l:is_normal_scenario = l:line_text =~# '\C^[ 	]*Scenario:' && !l:is_outline
+    let l:is_tag = l:line_text =~# '\C^[ 	]*@'
+    let l:is_examples = l:line_text =~# '\C^[ 	]*Examples:'
 
     " A new scenario or tag resets the expectation for 'Examples'
     if l:is_normal_scenario || l:is_tag
@@ -313,45 +506,209 @@ function! s:find_orphaned_examples_vim(lines)
   return l:orphaned_lines
 endfunction
 
-function! s:find_orphaned_examples(lines)
-  if !executable('awk')
-    return s:find_orphaned_examples_vim(a:lines)
-  endif
+" --- Unbalanced parentheses in Karate steps ---
+"
+" Replaces the old read()-only check, which matched '\<read\s*([^)]*$' and so
+" missed everything else: nested calls like read(foo(bar), any karate.* call,
+" and user JS helpers - while firing on commented-out lines.
+"
+" Only step lines are considered ('*', Given/When/Then/And/But). Feature and
+" Scenario titles, free-text descriptions, tags, tables and whole-line
+" comments are therefore out of scope by construction, and docstring bodies
+" are excluded by the caller.
 
-  let awk_script = [
-  \ 'BEGIN { C = 0 }',
-  \ '/^[ 	]*Scenario Outline:/ { C = 1 }',
-  \ '/^[ 	]*Scenario:/ && !/^[ 	]*Scenario Outline:/ { C = 0 }',
-  \ '/^[ 	]*@/ { C = 0 }',
-  \ '/^[ 	]*Examples:/ { if (C) { C = 0 } else { print NR } }'
-  \ ]
-  let awk_command = "awk '" . join(awk_script, " ") . "'"
-  let buffer_content = join(a:lines, "\n")
-  let output_lines = systemlist(awk_command, buffer_content)
+let s:CLOSERS = { ')': '(', '}': '{', ']': '[' }
 
-  return !empty(output_lines) ? map(output_lines, {_, val -> str2nr(val)}) : []
+" A complete string literal in any of Karate's three quote styles, backslash
+" escapes included. Used to blank strings out before the cheap balance test.
+let s:STRING_LITERAL = '\%('
+    \ . '"\%([^"\\]\|\\.\)*"'
+    \ . '\|' . '''\%([^''\\]\|\\.\)*'''
+    \ . '\|' . '`\%([^`\\]\|\\.\)*`'
+    \ . '\)'
+
+" Cheap, sound pre-check: is this line worth a character-by-character scan?
+"
+" The scan is an interpreted loop over every byte, and on a realistic Karate
+" file nearly every step contains a quote - running it everywhere cost more
+" than the entire rest of the linter. This does the same job with two
+" substitute() calls and a collapse loop over a handful of bracket
+" characters, all in C.
+"
+" It never misses a problem: complete strings are blanked out, so a quote left
+" over means an unterminated one, and matched bracket pairs are collapsed
+" until nothing more can be removed, so anything left over is genuinely
+" unbalanced (')(' included, which a simple count comparison would miss).
+function! s:line_may_be_unbalanced(line)
+    let stripped = substitute(a:line, s:STRING_LITERAL, '', 'g')
+    let stripped = substitute(stripped, ':\@<!//.*$', '', '')
+
+    " A quote surviving the strip had no partner.
+    if stripped =~# '[''"`]' | return 1 | endif
+
+    let brackets = substitute(stripped, '[^(){}[\]]', '', 'g')
+    while !empty(brackets)
+        let previous = brackets
+        let brackets = substitute(brackets, '()\|{}\|\[\]', '', 'g')
+        if brackets ==# previous | break | endif
+    endwhile
+
+    return !empty(brackets)
 endfunction
 
-function! s:find_unclosed_reads()
-    let invalid_lines = []
-    let pattern = '\<read\s*([^)]*$'
-    for lnum in range(1, line('$'))
-        if getline(lnum) =~# pattern
-            call add(invalid_lines, lnum)
+" Scans a step line for the first delimiter problem. Returns {} when the line
+" is well formed, otherwise one of:
+"   { 'kind': 'string',  'idx': <byte>, 'char': <quote> }
+"   { 'kind': 'bracket', 'idx': <byte>, 'char': '(' / '{' / '[' }
+"
+" Delimiters inside string literals do not count, and a trailing JavaScript
+" line comment is ignored - except for the '//' in a URL such as http://x.
+function! s:scan_delimiters(line)
+    let line_len = len(a:line)
+    let open_stack = []
+    let quote = ''
+    let quote_idx = -1
+    let i = 0
+
+    while i < line_len
+        let c = a:line[i]
+
+        if !empty(quote)
+            " Inside a string: only an escape or the closing quote matter.
+            if c ==# '\'
+                let i += 2
+                continue
+            endif
+            if c ==# quote
+                let quote = ''
+            endif
+            let i += 1
+            continue
         endif
-    endfor
-    return invalid_lines
+
+        if c ==# "'" || c ==# '"' || c ==# '`'
+            let quote = c
+            let quote_idx = i
+            let i += 1
+            continue
+        endif
+
+        if c ==# '/' && i + 1 < line_len && a:line[i + 1] ==# '/'
+            if i == 0 || a:line[i - 1] !=# ':'
+                break
+            endif
+            let i += 2
+            continue
+        endif
+
+        if c ==# '(' || c ==# '{' || c ==# '['
+            call add(open_stack, { 'char': c, 'idx': i })
+        elseif has_key(s:CLOSERS, c)
+            " A closer that does not match the innermost opener closes
+            " nothing, the same way a stray ')' always has: it must not cancel
+            " out a bracket that really is left open.
+            if !empty(open_stack) && open_stack[-1].char ==# s:CLOSERS[c]
+                call remove(open_stack, -1)
+            endif
+        endif
+
+        let i += 1
+    endwhile
+
+    " An unterminated string swallows the rest of the line, so it is reported
+    " alone: any bracket after the opening quote was never really seen, and
+    " piling those on top would just bury the root cause.
+    if !empty(quote)
+        return { 'kind': 'string', 'idx': quote_idx, 'char': quote }
+    endif
+    if !empty(open_stack)
+        return { 'kind': 'bracket', 'idx': open_stack[0].idx, 'char': open_stack[0].char }
+    endif
+    return {}
 endfunction
 
-function! s:find_unused_variables(lines)
+function! s:lint_delimiters(lines, docstring_body)
+    let report = []
+    let brackets_on = g:karate_linter_unbalanced_parens_rule
+    let strings_on = g:karate_linter_unterminated_string_rule
+    if !brackets_on && !strings_on | return report | endif
+
+    let step_pattern = '\C^\s*\%(\*\|Given\|When\|Then\|And\|But\)\s'
+    let lnum = 0
+
+    for line in a:lines
+        let lnum += 1
+        if has_key(a:docstring_body, lnum) | continue | endif
+
+        " Cheapest test first: a line with no delimiter at all cannot be
+        " unbalanced, and that covers most 'And match a == b' style steps.
+        if line !~# '[(){}[\]''"`]' | continue | endif
+        if line !~# step_pattern | continue | endif
+        if !s:line_may_be_unbalanced(line) | continue | endif
+
+        " Only reached for a line that really is broken, so the cost of the
+        " character scan - which is what pins down the exact column - is paid
+        " once per problem instead of once per step.
+        let problem = s:scan_delimiters(line)
+        if empty(problem) | continue | endif
+
+        if problem.kind ==# 'string'
+            if !strings_on | continue | endif
+            call add(report, {
+                \ 'lnum': lnum,
+                \ 'col': problem.idx + 1,
+                \ 'end_col': len(line) + 1,
+                \ 'text': printf('Unterminated string literal (no closing %s)', problem.char),
+                \ 'level': g:karate_linter_unterminated_string_level
+                \ })
+            continue
+        endif
+
+        if !brackets_on | continue | endif
+
+        if problem.char ==# '('
+            " Only report call parentheses: 'name(' or 'name ('. A bare
+            " grouping paren is left alone, per the agreed scope. Braces and
+            " brackets need no such test: in Karate they are always data
+            " literals, never grouping.
+            let before = strpart(line, 0, problem.idx)
+            let [name_text, name_start, name_end] = matchstrpos(before, '[A-Za-z_$][A-Za-z0-9_$.]*\s*$')
+            if name_start < 0 | continue | endif
+
+            let text = printf("Unclosed '(' in call to '%s'", substitute(name_text, '\s\+$', '', ''))
+            let col = name_start + 1
+        else
+            let text = printf("Unclosed '%s'", problem.char)
+            let col = problem.idx + 1
+        endif
+
+        call add(report, {
+            \ 'lnum': lnum,
+            \ 'col': col,
+            \ 'end_col': len(line) + 1,
+            \ 'text': text,
+            \ 'level': g:karate_linter_unbalanced_parens_level
+            \ })
+    endfor
+
+    return report
+endfunction
+
+function! s:find_unused_variables(lines, docstring_body)
     let report = []
     if !g:karate_linter_unused_variable_rule | return report | endif
 
     let definitions = {}
 
-    " Pass 1: Find all variable definitions
+    " Pass 1: Find all variable definitions.
+    " Docstring payload is skipped here: a '* def x' line inside a JSON or JS
+    " block is not a Karate definition. Note that only DEFINITIONS are
+    " skipped - usages are deliberately still counted everywhere, because
+    " Karate evaluates embedded expressions such as '#(userId)' inside
+    " docstrings, and those are genuine usages.
     let def_pattern = '^\s*\*\s*def\s\+\([a-zA-Z0-9_]\+\)'
     for i in range(len(a:lines))
+        if has_key(a:docstring_body, i + 1) | continue | endif
         let line = a:lines[i]
         let match_list = matchlist(line, def_pattern)
         if !empty(match_list)
@@ -363,39 +720,40 @@ function! s:find_unused_variables(lines)
 
     if empty(definitions) | return report | endif
 
-    " Pass 2: Find usages for each definition
-    let vars_to_check = keys(definitions)
-    for var_name in vars_to_check
-        let is_used = 0
-        let def_lnum = definitions[var_name]
-        let usage_pattern = '\<'.var_name.'\>'
+    " Pass 2: Find usages for ALL definitions in a single scan of the buffer.
+    "
+    " The previous implementation re-scanned every line for every variable
+    " (O(lines * variables)). matchstrlist() searches once with an alternation
+    " of all names and returns every match with its list index, in C.
+    " \< \> keep the same word-boundary semantics as the old '\<name\>' test,
+    " and \C matches the old case-sensitive =~# comparison.
+    let unused = copy(definitions)
+    let usage_pattern = '\C\<\%(' . join(keys(definitions), '\|') . '\)\>'
 
-        for i in range(len(a:lines))
-            " Don't count the definition line as a usage
-            if (i + 1) == def_lnum | continue | endif
+    for m in matchstrlist(a:lines, usage_pattern)
+        " A definition line is not a usage of the name it defines (but it may
+        " well be a usage of some other variable, e.g. '* def b = a + 1').
+        if get(definitions, m.text, -1) == m.idx + 1 | continue | endif
 
-            if a:lines[i] =~# usage_pattern
-                let is_used = 1
-                break
-            endif
-        endfor
-
-        if is_used
-            call remove(definitions, var_name)
+        if has_key(unused, m.text)
+            call remove(unused, m.text)
+            if empty(unused) | break | endif
         endif
     endfor
 
-    " Pass 3: Report remaining (unused) variables
-    for [var_name, lnum] in items(definitions)
-        let line_content = getline(lnum)
-        let pat = '\<'.var_name.'\>'
-        let match_byte_col = match(line_content, pat)
-        if match_byte_col > -1
-            let match_byte_len = len(matchstr(line_content, pat))
+    " Pass 3: Report remaining (unused) variables.
+    " Sorted by line: dictionary iteration order is unspecified in Vim, so the
+    " previous version emitted diagnostics (and loclist rows) in arbitrary order.
+    let leftovers = items(unused)
+    call sort(leftovers, {x, y -> x[1] - y[1]})
+
+    for [var_name, lnum] in leftovers
+        let [mtext, mstart, mend] = matchstrpos(a:lines[lnum - 1], '\C\<' . var_name . '\>')
+        if mstart > -1
             call add(report, {
                 \ 'lnum': lnum,
-                \ 'col': match_byte_col + 1,
-                \ 'end_col': match_byte_col + 1 + match_byte_len,
+                \ 'col': mstart + 1,
+                \ 'end_col': mend + 1,
                 \ 'text': 'Unused variable: ' . var_name,
                 \ 'level': g:karate_linter_unused_variable_level
                 \ })
@@ -405,47 +763,119 @@ function! s:find_unused_variables(lines)
     return report
 endfunction
 
-function! s:find_unclosed_docstring_vim()
-  let in_docstring = 0
-  let start_lnum = 0
-
-  for lnum in range(1, line('$'))
-    let line = getline(lnum)
-
-    if in_docstring && line =~ '^\s*\(\* def\|Scenario:\|Scenario Outline:\|Feature:\|@\)'
-        return start_lnum
-    endif
-
-    let occurrences = len(split(line, '"""', 1)) - 1
-    if occurrences > 0
-        for _ in range(occurrences)
-            if in_docstring
-                let in_docstring = 0
-                let start_lnum = 0
-            else
-                let in_docstring = 1
-                let start_lnum = lnum
-            endif
-        endfor
-    endif
-  endfor
-
-  if in_docstring
-    return start_lnum
-  endif
-
-  return 0
-endfunction
-
-function! s:find_unclosed_docstring()
-  return s:find_unclosed_docstring_vim()
-endfunction
-
 function! s:trim(text)
     return substitute(a:text, '^\s*\|\s*$', '', 'g')
 endfunction
 
-function! s:lint_scenario_outlines(buffer_lines)
+" Splits a Gherkin table row into cells, keeping the byte position of each
+" one. Positions come from the parse instead of a later search, so no pattern
+" is ever built out of user text.
+"
+" Returns [] for a line that is not a table row. Empty cells are preserved:
+" they still count as columns. A pipe escaped as '\|' is cell content.
+function! s:parse_table_row(line)
+    let bars = []
+    let i = 0
+    let line_len = len(a:line)
+    while i < line_len
+        if a:line[i] ==# '\'
+            let i += 2
+            continue
+        endif
+        if a:line[i] ==# '|'
+            call add(bars, i)
+        endif
+        let i += 1
+    endwhile
+
+    if len(bars) < 2 | return [] | endif
+
+    let cells = []
+    let idx = 0
+    while idx < len(bars) - 1
+        let start = bars[idx] + 1
+        let raw = strpart(a:line, start, bars[idx + 1] - start)
+        let lead = matchstr(raw, '^\s*')
+        let text = s:trim(raw)
+        let col = start + len(lead) + 1
+        " Empty cells get a one-column span so the range stays highlightable.
+        call add(cells, {
+            \ 'text': text,
+            \ 'col': col,
+            \ 'end_col': col + (empty(text) ? 1 : len(text)) })
+        let idx += 1
+    endwhile
+    return cells
+endfunction
+
+" Checks one Examples table for internal consistency: duplicated column names,
+" data rows whose cell count disagrees with the header, and a header with no
+" data rows under it (an outline that silently never runs).
+function! s:lint_examples_table(lines, docstring_body, header_lnum, outline_end, header_cells)
+    let report = []
+    let level = g:karate_linter_examples_table_level
+
+    " Duplicate column names: the later one wins in Gherkin, so the earlier
+    " column is silently unreachable.
+    let seen = {}
+    for cell in a:header_cells
+        if empty(cell.text) | continue | endif
+        if has_key(seen, cell.text)
+            call add(report, {
+                \ 'lnum': a:header_lnum, 'col': cell.col, 'end_col': cell.end_col,
+                \ 'text': printf("Duplicate Examples column '%s'", cell.text),
+                \ 'level': level })
+        endif
+        let seen[cell.text] = 1
+    endfor
+
+    " Data rows run contiguously under the header until the table stops.
+    let expected = len(a:header_cells)
+    let rows = 0
+    let lnum = a:header_lnum + 1
+
+    while lnum <= a:outline_end
+        if has_key(a:docstring_body, lnum) | break | endif
+        let line = a:lines[lnum - 1]
+        if line =~ '^\s*$' || line =~ '^\s*#'
+            let lnum += 1
+            continue
+        endif
+        if line !~ '^\s*|.*|$' | break | endif
+
+        let rows += 1
+        let cells = s:parse_table_row(line)
+        if len(cells) != expected
+            call add(report, {
+                \ 'lnum': lnum,
+                \ 'col': match(line, '\S') + 1,
+                \ 'end_col': len(line) + 1,
+                \ 'text': printf('Examples row has %d cell%s, the header has %d',
+                \                len(cells), len(cells) == 1 ? '' : 's', expected),
+                \ 'level': level })
+        endif
+        let lnum += 1
+    endwhile
+
+    if rows == 0
+        let header_line = a:lines[a:header_lnum - 1]
+        call add(report, {
+            \ 'lnum': a:header_lnum,
+            \ 'col': match(header_line, '\S') + 1,
+            \ 'end_col': len(header_line) + 1,
+            \ 'text': 'Examples table has no data rows',
+            \ 'level': level })
+    endif
+
+    return report
+endfunction
+
+
+" Docstring payload is skipped when locating block boundaries and the Examples
+" table, but NOT when collecting '<placeholder>' usages: Gherkin substitutes
+" Examples values inside docstrings too, so a placeholder used only in a JSON
+" payload is a real usage of that header.
+function! s:lint_scenario_outlines(buffer_lines, docstring_body)
     let report = []
     let num_lines = len(a:buffer_lines)
 
@@ -455,6 +885,10 @@ function! s:lint_scenario_outlines(buffer_lines)
     let in_outline = 0
     let lnum = 1
     while lnum <= num_lines
+        if has_key(a:docstring_body, lnum)
+            let lnum += 1
+            continue
+        endif
         let line = a:buffer_lines[lnum - 1]
 
         if line =~ '^\s*Scenario Outline:'
@@ -491,6 +925,7 @@ function! s:lint_scenario_outlines(buffer_lines)
 
         " Find Examples: line and header line
         for lnum_in_outline in range(outline.start, outline.end)
+            if has_key(a:docstring_body, lnum_in_outline) | continue | endif
             let line = a:buffer_lines[lnum_in_outline - 1]
             if line =~ '^\s*Examples:'
                 let examples_lnum = lnum_in_outline
@@ -509,19 +944,39 @@ function! s:lint_scenario_outlines(buffer_lines)
             endif
         endfor
 
+        " Rule: Examples table consistency.
+        " Only reached when an 'Examples:' block exists at all - an outline
+        " with no Examples is the missing_examples rule's business.
+        if g:karate_linter_examples_table_rule && examples_lnum > -1 && header_lnum == -1
+            let examples_line = a:buffer_lines[examples_lnum - 1]
+            let indent = match(examples_line, '\S')
+            call add(report, {
+                \ 'lnum': examples_lnum,
+                \ 'col': (indent > -1 ? indent : 0) + 1,
+                \ 'end_col': len(examples_line) + 1,
+                \ 'text': "'Examples' block has no table",
+                \ 'level': g:karate_linter_examples_table_level
+                \ })
+        endif
+
         if header_lnum == -1
             continue
         endif
 
-        " Parse headers
-        let header_line_content = a:buffer_lines[header_lnum - 1]
-        let parts = split(header_line_content, '|')
-        for part in parts
-            let header = s:trim(part)
-            if !empty(header)
-                call add(table_headers, header)
+        " Parse headers. Empty cells are kept in header_cells (they still count
+        " as columns) but stay out of table_headers, which is the list of names
+        " a placeholder can refer to.
+        let header_cells = s:parse_table_row(a:buffer_lines[header_lnum - 1])
+        for cell in header_cells
+            if !empty(cell.text)
+                call add(table_headers, cell.text)
             endif
         endfor
+
+        if g:karate_linter_examples_table_rule
+            call extend(report, s:lint_examples_table(
+                \ a:buffer_lines, a:docstring_body, header_lnum, outline.end, header_cells))
+        endif
 
         " Find all placeholders used in the outline body
         let placeholder_pattern = '<\([^<>]\+\)>'
@@ -550,14 +1005,20 @@ function! s:lint_scenario_outlines(buffer_lines)
                 if index(table_headers, used_var) == -1
                     let lnum_of_error = placeholders[used_var]
                     let line_content = a:buffer_lines[lnum_of_error - 1]
-                    let pat = '<' . used_var . '>'
-                    let col = match(line_content, pat)
-                    let end_col = col + len(pat)
+
+                    " stridx(), not match(): the placeholder name comes from
+                    " the file and may contain regular-expression
+                    " metacharacters. Building a pattern out of it found the
+                    " wrong offset, or none at all - and a col of 0 then made
+                    " prop_add() throw E964 and kill the whole render.
+                    let needle = '<' . used_var . '>'
+                    let idx = stridx(line_content, needle)
+                    if idx < 0 | continue | endif
 
                     call add(report, {
                         \ 'lnum': lnum_of_error,
-                        \ 'col': col + 1,
-                        \ 'end_col': end_col + 1,
+                        \ 'col': idx + 1,
+                        \ 'end_col': idx + 1 + len(needle),
                         \ 'text': "Placeholder '<" . used_var . ">' is not defined in the Examples table.",
                         \ 'level': g:karate_linter_undefined_placeholder_level
                         \ })
@@ -566,21 +1027,18 @@ function! s:lint_scenario_outlines(buffer_lines)
         endif
 
         " Rule: Unused Header
+        " Positions come from the parsed cells, so no pattern is built out of
+        " the header text either.
         if g:karate_linter_unused_header_rule
             let used_vars = keys(placeholders)
-            for header in table_headers
-                if index(used_vars, header) == -1
-                    let lnum_of_error = header_lnum
-                    let line_content = a:buffer_lines[lnum_of_error - 1]
-                    let pat = '\<'.header.'\>'
-                    let col = match(line_content, pat)
-                    let start_col = (col > -1) ? col + 1 : 1
-                    let end_col = start_col + len(header)
+            for cell in header_cells
+                if empty(cell.text) | continue | endif
+                if index(used_vars, cell.text) == -1
                     call add(report, {
-                        \ 'lnum': lnum_of_error,
-                        \ 'col': start_col,
-                        \ 'end_col': end_col,
-                        \ 'text': "Header '" . header . "' is defined in the Examples table but not used in the Scenario Outline.",
+                        \ 'lnum': header_lnum,
+                        \ 'col': cell.col,
+                        \ 'end_col': cell.end_col,
+                        \ 'text': "Header '" . cell.text . "' is defined in the Examples table but not used in the Scenario Outline.",
                         \ 'level': g:karate_linter_unused_header_level
                         \ })
                 endif
@@ -591,7 +1049,7 @@ function! s:lint_scenario_outlines(buffer_lines)
     return report
 endfunction
 
-function! s:lint_undefined_request_variables(lines)
+function! s:lint_undefined_request_variables(lines, docstring_body)
     let report = []
     if !g:karate_linter_undefined_request_var_rule | return report | endif
 
@@ -600,7 +1058,10 @@ function! s:lint_undefined_request_variables(lines)
     let def_pattern = '^\s*\*\s*def\s\+\([a-zA-Z0-9_]\+\)'
     let request_pattern = '^\s*\(And\|Given\|When\|Then\|\*\)\s\+request\s\+\([a-zA-Z0-9_]\+\)\s*\(#.*\)\?$'
 
+    " Both halves parse Karate statements, so docstring payload is skipped
+    " entirely here - a 'Given request x' line inside a JSON block is text.
     for lnum in range(1, len(a:lines))
+        if has_key(a:docstring_body, lnum) | continue | endif
         let line = a:lines[lnum - 1]
 
         " Check for 'request' usage FIRST
@@ -631,6 +1092,12 @@ function! s:lint_undefined_request_variables(lines)
     endfor
 
     return report
+endfunction
+
+" Public entry point for tests and debugging: returns the raw diagnostic
+" report (list of {lnum, col, end_col, text, level}) for the current buffer.
+function! KarateLinterReport() abort
+    return s:generate_lint_report()
 endfunction
 
 function! s:run_linter_and_show_loclist()
@@ -676,21 +1143,18 @@ function! s:clear_diagnostics(bufnr)
         let sign_group = 'karate_linter_' . bufnr
         call sign_unplace(sign_group, { 'buffer': bufnr })
     endif
-
-    " Clear error cache
-    if exists('b:karate_has_errors')
-        unlet b:karate_has_errors
-    endif
 endfunction
 
 function! s:update_diagnostics()
-    if !has('textprop') | return | endif
     let bufnr = bufnr('%')
     call s:clear_diagnostics(bufnr)
 
     let report = s:generate_lint_report()
 
     " --- Cache error status for auto-format ---
+    " Computed before the 'textprop' guard below on purpose: without text
+    " properties s:has_errors() used to always answer 0, so auto-format ran
+    " on files the linter had rejected.
     let b:karate_has_errors = 0
     for issue in report
         if issue.level ==# 'KarateLintError'
@@ -700,10 +1164,31 @@ function! s:update_diagnostics()
     endfor
     " --- End cache ---
 
-    if empty(report) | return | endif
+    " Index by line so the cursor handler is a dictionary lookup rather than a
+    " scan of the report on every cursor movement.
+    let b:karate_diagnostics = {}
+    for issue in report
+        if !has_key(b:karate_diagnostics, issue.lnum)
+            let b:karate_diagnostics[issue.lnum] = []
+        endif
+        call add(b:karate_diagnostics[issue.lnum], issue)
+    endfor
+
+    " Note: no echoing from here. This runs from the buffer-load and
+    " buffer-write autocommands too, where the cursor has not been placed yet
+    " and Vim is about to print its own message - a second message on top of
+    " that produces a 'Press ENTER' prompt. The debounce timer refreshes the
+    " message instead; see s:on_lint_timer().
+
+    if !has('textprop') || empty(report) | return | endif
 
     let sign_group = 'karate_linter_' . bufnr
     for issue in report
+        " Defence in depth: a rule that computes a bad column must not be able
+        " to abort the render for the entire buffer, which is what an E964 out
+        " of prop_add() used to do.
+        if issue.col < 1 || issue.end_col <= issue.col | continue | endif
+
         let prop_type = issue.level ==# 'KarateLintError' ? 'karate_lint_error' : 'karate_lint_warn'
         let sign_name = issue.level ==# 'KarateLintError' ? 'KarateLintError' : 'KarateLintWarn'
         let sign_id = s:sign_id + issue.lnum
@@ -722,6 +1207,144 @@ function! s:update_diagnostics()
     endfor
 endfunction
 
+" --- Message for the line under the cursor ---
+"
+" Signs and highlights show that something is wrong but not what. This echoes
+" the message for the current line in the command line.
+
+" Truncate to a display width. printf('%.<n>S') counts bytes for the precision,
+" which cuts multibyte text (a Cyrillic variable name) far too early, so the
+" width is measured properly here.
+function! s:truncate_to_width(text, maxwidth)
+    if a:maxwidth <= 0 | return '' | endif
+    if strdisplaywidth(a:text) <= a:maxwidth | return a:text | endif
+
+    let out = a:text
+    while !empty(out) && strdisplaywidth(out . '...') > a:maxwidth
+        let out = strcharpart(out, 0, strchars(out) - 1)
+    endwhile
+    return out . '...'
+endfunction
+
+" How much room the command line really has. A message that fills the last
+" screen line makes Vim prompt with 'Press ENTER', which would be far more
+" annoying than a clipped message.
+function! s:echo_width()
+    let width = &columns - 1
+    if &showcmd | let width -= 11 | endif
+    return width
+endfunction
+
+" Of the diagnostics on a line, the most relevant one: whatever covers the
+" cursor column, else errors before warnings, else the leftmost.
+function! s:pick_diagnostic(diags, col)
+    let best = {}
+    for issue in a:diags
+        if a:col >= issue.col && a:col < issue.end_col
+            if empty(best) || (issue.level ==# 'KarateLintError' && best.level !=# 'KarateLintError')
+                let best = issue
+            endif
+        endif
+    endfor
+    if !empty(best) | return best | endif
+
+    for issue in a:diags
+        if empty(best)
+            \ || (issue.level ==# 'KarateLintError' && best.level !=# 'KarateLintError')
+            \ || (issue.level ==# best.level && issue.col < best.col)
+            let best = issue
+        endif
+    endfor
+    return best
+endfunction
+
+function! s:format_diagnostic_message(diags, col, maxwidth)
+    if empty(a:diags) | return '' | endif
+
+    let issue = s:pick_diagnostic(a:diags, a:col)
+    let tag = issue.level ==# 'KarateLintError' ? 'E' : 'W'
+    let extra = len(a:diags) > 1 ? printf('  (+%d more)', len(a:diags) - 1) : ''
+
+    " The suffix is kept whole; only the message text is clipped.
+    let prefix = '[karate] ' . tag . ': '
+    let budget = a:maxwidth - strdisplaywidth(prefix) - strdisplaywidth(extra)
+    return prefix . s:truncate_to_width(issue.text, budget) . extra
+endfunction
+
+function! s:echo_diagnostic()
+    if !g:karate_linter_echo_cursor | return | endif
+
+    " Never write to the command line while inserting or replacing: it fights
+    " with the completion menu, and the debounce timer can fire mid-insert.
+    if mode() =~# '^[iR]' | return | endif
+
+    let diags = get(get(b:, 'karate_diagnostics', {}), line('.'), [])
+    let message = s:format_diagnostic_message(diags, col('.'), s:echo_width())
+
+    " Only touch the command line when the message actually changes: echoing on
+    " every cursor movement would keep wiping messages from other plugins.
+    if message ==# get(b:, 'karate_echoed', '') | return | endif
+    let b:karate_echoed = message
+
+    if empty(message)
+        echo ''
+        return
+    endif
+
+    let level = s:pick_diagnostic(diags, col('.')).level
+    execute 'echohl' (level ==# 'KarateLintError' ? 'ErrorMsg' : 'WarningMsg')
+    echo message
+    echohl NONE
+endfunction
+
+" --- Debounced updates ---
+"
+" TextChanged/TextChangedI fire on every single keystroke. Re-linting the
+" whole buffer that often is pure waste: coalesce bursts of edits into one
+" pass once typing pauses.
+
+let s:lint_timer = -1
+
+function! s:cancel_pending_update()
+    if s:lint_timer != -1
+        call timer_stop(s:lint_timer)
+        let s:lint_timer = -1
+    endif
+endfunction
+
+function! s:on_lint_timer(bufnr, timer)
+    let s:lint_timer = -1
+    " The user may have switched buffers while the timer was pending; the new
+    " buffer gets its own lint from BufWinEnter, so just drop this one.
+    if bufnr('%') != a:bufnr | return | endif
+    call s:update_diagnostics()
+
+    " An edit can add or remove a diagnostic on the line the cursor is already
+    " sitting on, and that produces no CursorMoved. This is the one place it
+    " is safe to refresh the message: the user is idle, the buffer is loaded,
+    " and Vim is not about to print a message of its own.
+    call s:echo_diagnostic()
+endfunction
+
+function! s:schedule_update()
+    call s:cancel_pending_update()
+    let delay = get(g:, 'karate_linter_debounce_ms', 150)
+    if delay <= 0
+        call s:update_diagnostics()
+        return
+    endif
+    let bufnr = bufnr('%')
+    let s:lint_timer = timer_start(delay, function('s:on_lint_timer', [bufnr]))
+endfunction
+
+" Run any pending lint right now. Needed before anything that reads the
+" cached error state (auto-format on save), otherwise a debounced edit could
+" still be in flight and s:has_errors() would answer from stale data.
+function! s:flush_pending_update()
+    call s:cancel_pending_update()
+    call s:update_diagnostics()
+endfunction
+
 " --- Auto-formatting on save (re-implemented) ---
 function! s:has_errors()
     return get(b:, 'karate_has_errors', 0)
@@ -731,7 +1354,7 @@ function! s:smart_auto_format()
     let l:save_cursor = getcurpos()
 
     " 1. Find and store original content of all docstring blocks
-    let docstring_ranges = s:find_all_docstring_ranges()
+    let docstring_ranges = s:find_all_docstring_ranges(getline(1, '$'))
     let original_blocks = {}
     for range in docstring_ranges
         let start_lnum = range[0]
@@ -772,6 +1395,12 @@ function! s:smart_auto_format()
 endfunction
 
 function! s:auto_format_on_save()
+    " Apply any debounced edit before anything reads the cached error state,
+    " so the buffer being written is judged as it is right now. Done first and
+    " unconditionally: after a save the gutter should be current even when
+    " auto-formatting itself is turned off.
+    call s:flush_pending_update()
+
     " If we just formatted JSON, skip this auto-format to prevent messing it up.
     if get(b:, 'karate_just_formatted_json', 0)
         let b:karate_just_formatted_json = 0 " Consume the flag
@@ -890,11 +1519,21 @@ command! KarateTabsToSpaces call s:replace_tabs_with_spaces()
 
 augroup KarateLinter
   autocmd!
-  " Clear diagnostics when leaving the buffer
-  autocmd BufLeave,WinLeave *.feature call s:clear_diagnostics(str2nr(expand('<abuf>')))
+  " Lint when the buffer becomes visible or is (re)loaded.
+  " Text properties and signs are buffer-local and survive window switches, so
+  " there is no longer a BufLeave/WinLeave teardown followed by a full
+  " recompute on BufEnter - that was doing the whole job twice per switch.
+  autocmd BufWinEnter,BufReadPost *.feature call s:update_diagnostics()
 
-  " Update diagnostics on events
-  autocmd BufEnter,BufWinEnter,TextChanged,TextChangedI *.feature call s:update_diagnostics()
+  " Debounced re-lint while editing.
+  autocmd TextChanged,TextChangedI *.feature call s:schedule_update()
+
+  " Message for the line under the cursor. Normal/visual mode only: echoing
+  " while inserting fights with the completion menu.
+  autocmd CursorMoved *.feature call s:echo_diagnostic()
+
+  " Nothing pending should outlive the buffer.
+  autocmd BufUnload *.feature call s:cancel_pending_update()
 
   " Auto-format on save
   autocmd BufWritePre *.feature call s:auto_format_on_save()

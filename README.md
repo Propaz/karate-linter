@@ -11,7 +11,7 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **Finds Unused Variables:** Warns about variables defined with `* def` that are never used in the file.
 -   **Scenario Outline Validation:** Checks for undefined placeholders in steps and unused parameter definitions in `Examples` tables.
 -   **Request Variable Validation:** Ensures variables used in a `request` step are defined beforehand.
--   **High Performance:** Uses `ripgrep` and `awk` for fast, whole-file analysis when available, with a seamless fallback to pure Vimscript otherwise.
+-   **High Performance:** Pure Vimscript, no subprocesses. Linting is debounced while you type, so a burst of keystrokes costs one pass, not one per key.
 -   **Smart Auto-formatting:** Optionally formats the file on save (`gg=G`), intelligently preserving the content of docstring blocks (`"""..."""`) to avoid corrupting embedded JSON or other data.
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
@@ -21,9 +21,10 @@ This plugin provides real-time linting for common errors and style issues in Kar
 Install using [vim-plug](https://github.com/junegunn/vim-plug):
 
 ```vim
-" Make sure you have ripgrep and awk for the best performance
 Plug 'Propaz/karate-linter'
 ```
+
+Requires Vim 9.1.0009 or newer.
 
 Then run `:PlugInstall` in Vim.
 
@@ -33,7 +34,7 @@ The linter runs automatically as you type. When an issue is detected, the line w
 -   `>>` for errors
 -   `W>` for warnings
 
-Hovering over the highlighted code or using your LSP info command will show the error message.
+The message for the line under the cursor is shown in the command line; see [Seeing the message](#seeing-the-message).
 
 ## Commands
 
@@ -105,10 +106,117 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
     -   `g:karate_linter_unused_variable_level`: Severity.
     -   Defaults: `1`, `'KarateLintWarn'`
 
--   **Unclosed `read()` function:**
-    -   `g:karate_linter_unclosed_read_rule`: `1` or `0`.
-    -   `g:karate_linter_unclosed_read_level`: Severity.
+-   **Unbalanced bracket in a step:** covers `(`, `{` and `[` — any function
+    call (`read(...)`, `call read(...)`, any `karate.*(...)`, your own JS
+    helpers) as well as inline JSON and array literals, including nested cases
+    such as `read(foo(bar)` and `{ a: [1, 2 }`.
+    -   `g:karate_linter_unbalanced_parens_rule`: `1` or `0`.
+    -   `g:karate_linter_unbalanced_parens_level`: Severity.
     -   Defaults: `1`, `'KarateLintError'`
+    -   Only step lines are inspected (`*`, `Given`, `When`, `Then`, `And`,
+        `But`). Brackets inside string literals (`'`, `"`, `` ` ``, with
+        backslash escapes) are ignored, as is a trailing `//` comment — but
+        not the `//` in a URL. Docstring bodies are skipped entirely, and when
+        a docstring is left unclosed the rest of the file is skipped too, so
+        that the docstring rule reports it alone. A bare grouping paren
+        (`* def x = (a + b`) is out of scope; for `(` the check is about calls.
+        Braces and brackets need no such test — in Karate they are always data
+        literals.
+    -   Replaces the former `read()`-only rule. Setting the old
+        `g:karate_linter_unclosed_read_rule` / `_level` still works and is
+        applied to this rule, so existing configuration keeps working.
+
+### Seeing the message
+
+Signs in the gutter (`>>` for errors, `W>` for warnings) and the inline
+highlight show *that* a line has a problem. The message itself is echoed in the
+command line for whichever line the cursor is on:
+
+```
+[karate] E: Unclosed '(' in call to 'karate.jsonPath'
+```
+
+-   `g:karate_linter_echo_cursor`: `1` or `0`. Default `1`.
+
+Details worth knowing:
+
+-   When a line carries several diagnostics, the one under the cursor column
+    wins; otherwise errors are preferred over warnings, and the rest are
+    summarised as `(+N more)`.
+-   Long messages are clipped to the width of the command line so that Vim
+    never stops with a `Press ENTER` prompt. Clipping counts display cells, so
+    non-ASCII names survive intact.
+-   The command line is only written to when the message actually changes, to
+    avoid wiping messages from other plugins on every cursor movement.
+-   Normal and visual mode only — echoing during insert would fight with the
+    completion menu.
+-   Nothing is printed while a file is being opened or written. Vim prints its
+    own message at those moments, and a second one on top of it would force a
+    `Press ENTER` prompt. When an edit changes the diagnostic on the line the
+    cursor is already on — which produces no cursor movement — the message is
+    refreshed once the debounce timer has run.
+
+`:KarateLintCheck` still opens the full list in the location list.
+
+### Docstrings and rule scope
+
+The body of a `"""` block is payload — JSON, JS, XML, GraphQL — not Karate
+syntax. Rules that parse Karate statements therefore stop at the block
+delimiters: unbalanced parentheses, `callread`, `But`/`And`, missing space
+after a keyword, unused variables, undefined `request` variables, and every
+structural rule (`Feature:` / `Scenario:` / `Background:` / `Examples:`
+detection). Without this a JSON payload that merely mentions `Examples:`, or a
+line of JS starting with `*`, produced phantom errors.
+
+Two deliberate exceptions:
+
+-   **Tabs are still reported inside docstrings** — they break indentation
+    wherever they appear. Trailing whitespace and maximum line length are not,
+    since both are normal in a payload.
+-   **Variable and placeholder *usages* still count inside docstrings.** Karate
+    evaluates embedded expressions such as `#(userId)`, and Gherkin substitutes
+    `<placeholder>` values into docstrings, so a variable used only inside a
+    block is genuinely used and is not reported as unused. Only *definitions*
+    (`* def x = ...`) are ignored there.
+
+The `"""` delimiter lines themselves are treated as Karate syntax, so trailing
+whitespace on them is still flagged.
+
+-   **Unterminated string literal in a step:** `Given path 'oops`
+    -   `g:karate_linter_unterminated_string_rule`: `1` or `0`.
+    -   `g:karate_linter_unterminated_string_level`: Severity.
+    -   Defaults: `1`, `'KarateLintError'`
+    -   Reported on its own: an unterminated quote swallows the rest of the
+        line, so bracket findings after it would just bury the real cause.
+
+-   **Examples table consistency:** a data row whose cell count disagrees with
+    the header, a duplicated column name, a header with no data rows under it,
+    and an `Examples:` block with no table at all.
+    -   `g:karate_linter_examples_table_rule`: `1` or `0`.
+    -   `g:karate_linter_examples_table_level`: Severity.
+    -   Defaults: `1`, `'KarateLintError'`
+
+-   **Duplicate `Feature:` block:** a feature file declares exactly one.
+    -   `g:karate_linter_duplicate_feature_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintError'`
+
+-   **`Background:` in the wrong place:** repeated, or placed after the first
+    `Scenario:` (invalid Gherkin — a Background applies to the scenarios that
+    follow it).
+    -   `g:karate_linter_background_placement_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintError'`
+
+-   **Duplicate scenario name:** ambiguous in reports and in `--name` filters.
+    -   `g:karate_linter_duplicate_scenario_name_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintWarn'`
+
+-   **`<placeholder>` in a plain `Scenario`:** nothing substitutes it there, so
+    it is almost always a step copied out of a `Scenario Outline`.
+    -   `g:karate_linter_placeholder_outside_outline_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintWarn'`
+    -   Only identifier-shaped names count, and a line containing `</` or `/>`
+        is skipped: Karate allows inline XML such as
+        `* def body = <root>text</root>`, whose tags are not placeholders.
 
 -   **Unclosed docstring (`"""`):**
     -   `g:karate_linter_unclosed_docstring_rule`: `1` or `0`.

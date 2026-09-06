@@ -1,0 +1,134 @@
+=== 01_simple_rules.feature
+    L8   c1  -2   Error            Tabs are not allowed
+    L9   c24 -27  Error            Trailing whitespace
+    L10  c9  -12  Warn             Use 'And' instead of 'But' for consistency
+    L11  c9  -14  Error            Missing space after keyword (Given, When, Then, etc.)
+    L12  c25 -34  Error            Use 'call read' instead of 'callread'
+    L14  c121-150 Warn             Line is too long (149 > 120 bytes)
+    L12  c15 -22  Warn             Unused variable: payload
+    L13  c15 -24  Warn             Unused variable: unusedOne
+=== 02_outlines_missing_examples.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L6   c5  -48  Error            'Scenario Outline' without a corresponding 'Examples' block
+    L10  c5  -53  Error            'Scenario Outline' without a corresponding 'Examples' block
+    L16  c5  -41  Error            'Scenario Outline' without a corresponding 'Examples' block
+=== 03_orphaned_examples.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L9   c9  -18  Error            Found 'orphaned' 'Examples' block without 'Scenario Outline'
+=== 04_docstring_unclosed.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L8   c9  -12  Error            Unclosed DocString. Block started here.
+=== 05_docstring_ok.feature
+    (no issues)
+=== 06_placeholders.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L8   c24 -33  Error            Placeholder '<missing>' is not defined in the Examples table.
+    L11  c23 -28  Warn             Header 'extra' is defined in the Examples table but not used in the Scenario Outline.
+=== 07_request_vars.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L7   c23 -33  Error            Variable 'notDefined' used with 'request' is not defined before this line.
+=== 08_unclosed_read.feature
+    L7   c22 -38  Error            Unclosed '(' in call to 'read'
+=== 09_structure_missing_all.feature
+    L2   c7  -12  Warn             Unused variable: stray
+    L1   c1  -31  Warn             Missing mandatory 'Feature:' block in the file
+    L1   c1  -31  Warn             Missing 'Scenario:' or 'Scenario Outline:' blocks in the file
+=== 10_structure_empty_first_line.feature
+    L2   c1  -33  Warn             Missing mandatory 'Feature:' block in the file
+    L2   c1  -33  Warn             Missing 'Scenario:' or 'Scenario Outline:' blocks in the file
+=== 11_structure_no_background.feature
+    L1   c1  -23  Warn             Missing 'Background' block
+=== 12_clean.feature
+    (no issues)
+=== 13_original_test.feature
+    L7   c9  -18  Error            'Examples' block has no table
+=== 14_parens_bad.feature
+    L8   c15 -21  Warn             Unused variable: nested
+    L9   c15 -17  Warn             Unused variable: id
+    L11  c15 -16  Warn             Unused variable: v
+    L7   c16 -32  Error            Unclosed '(' in call to 'read'
+    L8   c24 -37  Error            Unclosed '(' in call to 'read'
+    L9   c20 -52  Error            Unclosed '(' in call to 'karate.jsonPath'
+    L10  c17 -39  Error            Unclosed '(' in call to 'karate.pretty'
+    L11  c19 -34  Error            Unclosed '(' in call to 'myJsHelper'
+    L12  c27 -34  Error            Unclosed '(' in call to 'helper'
+=== 15_parens_ok.feature
+    L10  c33 -34  Error            Trailing whitespace
+    L10  c15 -16  Warn             Unused variable: t
+    L11  c15 -21  Warn             Unused variable: nested
+    L12  c15 -16  Warn             Unused variable: q
+    L14  c15 -17  Warn             Unused variable: dq
+    L15  c15 -19  Warn             Unused variable: tick
+    L16  c15 -18  Warn             Unused variable: esc
+    L17  c15 -18  Warn             Unused variable: url
+    L18  c15 -18  Warn             Unused variable: cmt
+    L20  c15 -23  Warn             Unused variable: grouping
+    L22  c9  -18  Error            Found 'orphaned' 'Examples' block without 'Scenario Outline'
+=== 16_parens_docstring.feature
+    L15  c15 -18  Warn             Unused variable: out
+=== 17_callread.feature
+    L7   c19 -28  Error            Use 'call read' instead of 'callread'
+    L7   c15 -16  Warn             Unused variable: a
+    L8   c15 -16  Warn             Unused variable: b
+=== 18_parens_unclosed_docstring.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L7   c15 -17  Warn             Unused variable: fn
+    L8   c9  -12  Error            Unclosed DocString. Block started here.
+=== 19_docstring_leakage.feature
+    L12  c1  -2   Error            Tabs are not allowed
+=== 20_docstring_structural_leak.feature
+    (no issues)
+=== 21_docstring_embedded_usage.feature
+    (no issues)
+=== 22_long_multibyte_message.feature
+    L7   c121-144 Warn             Line is too long (143 > 120 bytes)
+    L4   c15 -19  Warn             Unused variable: base
+    L7   c21 -143 Error            Placeholder '<переменнаяСОченьДлиннымИменемДляПроверкиОбрезкиПоШиринеЯчеек>' is not defined in the Examples table.
+    L10  c15 -17  Warn             Header 'id' is defined in the Examples table but not used in the Scenario Outline.
+=== 23_regex_metachars.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L7   c21 -26  Error            Placeholder '<a\b>' is not defined in the Examples table.
+    L8   c26 -31  Error            Placeholder '<x.y>' is not defined in the Examples table.
+    L11  c15 -17  Warn             Header 'id' is defined in the Examples table but not used in the Scenario Outline.
+    L11  c20 -23  Warn             Header 'a.b' is defined in the Examples table but not used in the Scenario Outline.
+=== 24_delimiters_bad.feature
+    L7   c15 -22  Warn             Unused variable: payload
+    L8   c15 -19  Warn             Unused variable: list
+    L10  c15 -19  Warn             Unused variable: deep
+    L14  c15 -21  Warn             Unused variable: paired
+    L15  c15 -21  Warn             Unused variable: braces
+    L16  c15 -20  Warn             Unused variable: instr
+    L7   c25 -31  Error            Unclosed '{'
+    L8   c22 -27  Error            Unclosed '['
+    L9   c20 -33  Error            Unterminated string literal (no closing ')
+    L10  c22 -34  Error            Unclosed '{'
+    L14  c29 -34  Error            Unclosed '(' in call to 'read'
+    L15  c28 -29  Error            Unclosed '{'
+    L16  c33 -44  Error            Unclosed '(' in call to 'karate.get'
+=== 25_delimiters_ok.feature
+    L7   c15 -22  Warn             Unused variable: payload
+    L8   c15 -18  Warn             Unused variable: msg
+    L9   c15 -17  Warn             Unused variable: dq
+    L10  c15 -18  Warn             Unused variable: esc
+    L11  c15 -18  Warn             Unused variable: url
+    L12  c15 -18  Warn             Unused variable: cmt
+    L13  c15 -23  Warn             Unused variable: grouping
+=== 26_examples_table.feature
+    L4   c15 -19  Warn             Unused variable: base
+    L12  c13 -18  Error            Examples row has 1 cell, the header has 2
+    L13  c13 -26  Error            Examples row has 3 cells, the header has 2
+    L19  c20 -22  Error            Duplicate Examples column 'id'
+    L26  c13 -18  Error            Examples table has no data rows
+=== 27_structure_bad.feature
+    L13  c15 -19  Warn             Unused variable: late
+    L9   c5  -24  Warn             Duplicate scenario name 'same name' (first used on line 6)
+    L12  c5  -16  Error            Duplicate 'Background:' block (the first one is on line 3)
+    L15  c1  -16  Error            Duplicate 'Feature:' block; a feature file declares exactly one
+=== 28_placeholder_outside_outline.feature
+    L12  c15 -19  Warn             Unused variable: body
+    L13  c15 -26  Warn             Unused variable: selfclosing
+    L7   c21 -29  Warn             Placeholder '<userId>' in a plain Scenario is never substituted; use 'Scenario Outline'
+    L8   c24 -31  Warn             Placeholder '<query>' in a plain Scenario is never substituted; use 'Scenario Outline'
+=== 29_background_after_scenario.feature
+    L7   c15 -19  Warn             Unused variable: base
+    L6   c5  -16  Error            'Background:' must come before the first 'Scenario:'
