@@ -19,6 +19,26 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading from 1.x
+
+-   **Vim 9.1.0009 or newer is now required.** The engine is Vim9 script; on an
+    older Vim the plugin prints a message and does nothing rather than failing
+    obscurely.
+-   **The plugin now ships an `autoload/` directory** alongside `plugin/`. Any
+    plugin manager handles this; if you vendored `plugin/karate_linter.vim` by
+    hand, copy the whole repository instead.
+-   **Expect new findings on files that were previously clean.** Unbalanced
+    brackets, unterminated strings, Examples-table consistency, duplicate
+    `Feature:`/`Background:`/scenario names and stray `<placeholder>`s are all
+    on by default, and the `callread` rule now actually fires — it never
+    matched anything before. Each has its own `_rule` toggle.
+-   **`g:karate_linter_unclosed_read_rule` / `_level` still work.** They are
+    applied to the rule that replaced them,
+    `g:karate_linter_unbalanced_parens_*`.
+-   **`g:karate_linter_max_line_length` now counts display columns, not
+    bytes.** Non-ASCII lines that used to be flagged at roughly half the stated
+    limit no longer are.
+
 ## Installation
 
 Install using [vim-plug](https://github.com/junegunn/vim-plug):
