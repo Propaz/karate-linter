@@ -332,6 +332,40 @@ sign define KarateLintWarn text=W!
 
 ---
 
+## Troubleshooting
+
+### `<CR>` in the location list does nothing
+
+Almost always a mapping of your own, and the usual culprit is `<C-m>`.
+
+Vim sends the same byte for Ctrl-M and Enter — carriage return, decimal 13 —
+and in a terminal it cannot tell them apart. A normal-mode mapping for `<C-m>`
+is therefore a mapping for `<CR>` *everywhere*, including the location list,
+where Enter is the built-in jump rather than a mapping that could override it.
+
+Check with:
+
+```vim
+:nmap <CR>
+```
+
+If that prints anything, it is what Enter does in the list. The same collision
+exists for `<C-i>`/`<Tab>`, `<C-[>`/`<Esc>` and `<C-h>`/`<BS>`.
+
+Either move the mapping off Enter, or give the list window its own:
+
+```vim
+autocmd FileType qf nnoremap <buffer> <CR> <CR>
+```
+
+A buffer-local mapping wins over a global one, and `nnoremap` is non-recursive,
+so this runs the built-in jump rather than looping back into your mapping.
+
+`:lnext` and `:lprevious` are unaffected either way, and need no mapping to
+walk the list.
+
+---
+
 ## Contributing
 
 Contributions are welcome! If you find a bug, have a feature request, or want to contribute code, please feel free to:
