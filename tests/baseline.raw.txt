@@ -132,3 +132,7 @@
 === 29_background_after_scenario.feature
     L7   c15 -19  Warn             Unused variable: base
     L6   c5  -16  Error            'Background:' must come before the first 'Scenario:'
+=== 30_multibyte_columns.feature
+    L7   c15 -22  Warn             Unused variable: payload
+    L7   c25 -53  Error            Unclosed '{'
+    L14  c44 -56  Warn             Header 'лишний' is defined in the Examples table but not used in the Scenario Outline.

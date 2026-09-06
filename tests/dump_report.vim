@@ -15,6 +15,10 @@ set noswapfile
 set encoding=utf-8
 
 let s:root = fnamemodify(expand('<sfile>:p'), ':h:h')
+" The engine is loaded lazily from autoload/, so the repo has to be on
+" the runtimepath before the plugin file is sourced.
+let s:rtp = substitute(s:root, '\', '/', 'g')
+execute 'set runtimepath^=' . escape(s:rtp, ' ,')
 execute 'source ' . fnameescape(s:root . '/plugin/karate_linter.vim')
 
 " Formats one issue into a stable single line.

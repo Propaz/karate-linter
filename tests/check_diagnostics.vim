@@ -13,6 +13,10 @@ set noswapfile
 set encoding=utf-8
 
 let s:root = fnamemodify(expand('<sfile>:p'), ':h:h')
+" The engine is loaded lazily from autoload/, so the repo has to be on
+" the runtimepath before the plugin file is sourced.
+let s:rtp = substitute(s:root, '\', '/', 'g')
+execute 'set runtimepath^=' . escape(s:rtp, ' ,')
 execute 'source ' . fnameescape(s:root . '/plugin/karate_linter.vim')
 
 let s:out = []
@@ -111,7 +115,27 @@ doautocmd BufWritePre
 call s:Ok('buffer untouched when errors pending', getline(1, '$') ==# s:before, v:true)
 call s:Ok('cache reflects the pending edit', get(b:, 'karate_has_errors', -1), 1)
 
-" --- 7. No stray public surface beyond the documented entry point ---
+" --- 7. Columns are byte offsets, also on non-ASCII lines ---
+" prop_add() wants byte columns. In Vim9 script str[i] indexes by CHARACTER,
+" so the scanners use strpart(); if that ever regresses, the columns below
+" drift by one byte per non-ASCII character to their left.
+call add(s:out, '--- byte columns on multibyte lines')
+call s:Fixture('30_multibyte_columns.feature')
+function! s:TextAt(issue) abort
+    let line = getline(a:issue.lnum)
+    return strpart(line, a:issue.col - 1, a:issue.end_col - a:issue.col)
+endfunction
+let s:found = {}
+for s:issue in KarateLinterReport()
+    let s:found[s:issue.text] = s:TextAt(s:issue)
+endfor
+call s:Ok('unbalanced brace after cyrillic',
+    \ get(s:found, "Unclosed '{'", ''), "{ имя: 'значение'")
+call s:Ok('table cell after a cyrillic cell',
+    \ get(s:found, "Header 'лишний' is defined in the Examples table but not used in the Scenario Outline.", ''),
+    \ 'лишний')
+
+" --- 8. No stray public surface beyond the documented entry point ---
 call add(s:out, '--- public api')
 call s:Ok('KarateLinterReport exists', exists('*KarateLinterReport'), 1)
 call s:Ok('no test-only SID hook left behind', exists('*KarateLinterSid'), 0)

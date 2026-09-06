@@ -11,7 +11,10 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **Finds Unused Variables:** Warns about variables defined with `* def` that are never used in the file.
 -   **Scenario Outline Validation:** Checks for undefined placeholders in steps and unused parameter definitions in `Examples` tables.
 -   **Request Variable Validation:** Ensures variables used in a `request` step are defined beforehand.
--   **High Performance:** Pure Vimscript, no subprocesses. Linting is debounced while you type, so a burst of keystrokes costs one pass, not one per key.
+-   **High Performance:** Vim9 script, no subprocesses. Linting is debounced
+    while you type, so a burst of keystrokes costs one pass rather than one per
+    key, and the engine is loaded lazily - nothing is read or compiled until
+    you open your first `.feature` file.
 -   **Smart Auto-formatting:** Optionally formats the file on save (`gg=G`), intelligently preserving the content of docstring blocks (`"""..."""`) to avoid corrupting embedded JSON or other data.
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
@@ -25,6 +28,11 @@ Plug 'Propaz/karate-linter'
 ```
 
 Requires Vim 9.1.0009 or newer.
+
+The plugin is split in two: `plugin/karate_linter.vim` only declares options,
+commands and autocommands, while the engine lives in
+`autoload/karate/linter.vim` and is pulled in through `import autoload` on
+first use.
 
 Then run `:PlugInstall` in Vim.
 
