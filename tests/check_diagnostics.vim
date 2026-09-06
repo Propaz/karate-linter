@@ -135,7 +135,29 @@ call s:Ok('table cell after a cyrillic cell',
     \ get(s:found, "Header 'лишний' is defined in the Examples table but not used in the Scenario Outline.", ''),
     \ 'лишний')
 
-" --- 8. No stray public surface beyond the documented entry point ---
+" --- 8. Line length is measured in display columns, not bytes ---
+" Counting bytes halved the effective limit for non-ASCII text. The anchor has
+" to be the byte offset of the character sitting on column max+1, so that the
+" highlight starts on a character boundary rather than inside one.
+call add(s:out, '--- line length in columns')
+call s:Fixture('22_long_multibyte_message.feature')
+let s:toolong = filter(KarateLinterReport(), 'v:val.text =~# "too long"')
+call s:Ok('a 131-column cyrillic line is reported', len(s:toolong), 1)
+if len(s:toolong) == 1
+    let s:line = getline(s:toolong[0].lnum)
+    let s:col = s:toolong[0].col
+    call s:Ok('anchor is past the limit, not at byte 121', s:col > 121, v:true)
+    call s:Ok('everything before the anchor fits exactly',
+        \ strdisplaywidth(strpart(s:line, 0, s:col - 1)), 120)
+    call s:Ok('anchor is on a character boundary',
+        \ byteidx(s:line, charidx(s:line, s:col - 1)), s:col - 1)
+endif
+
+call s:Fixture('30_multibyte_columns.feature')
+call s:Ok('190 bytes but 110 columns is not reported',
+    \ len(filter(KarateLinterReport(), 'v:val.text =~# "too long"')), 0)
+
+" --- 9. No stray public surface beyond the documented entry point ---
 call add(s:out, '--- public api')
 call s:Ok('KarateLinterReport exists', exists('*KarateLinterReport'), 1)
 call s:Ok('no test-only SID hook left behind', exists('*KarateLinterSid'), 0)

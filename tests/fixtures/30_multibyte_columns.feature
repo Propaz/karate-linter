@@ -5,6 +5,7 @@ Feature: multibyte byte offsets
 
     Scenario: cyrillic before an unbalanced brace
         * def payload = { имя: 'значение'
+        * def широкая = 'кириллическая строка сильно длиннее ста двадцати байт но короче ста двадцати колонок'
         Then match base == 1
 
     Scenario Outline: cyrillic table cells

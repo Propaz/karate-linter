@@ -112,6 +112,28 @@ def AddLineDiag(report: list<dict<any>>, lines: list<string>, lnum: number,
   })
 enddef
 
+# Byte offset of the first character that sits past maxwidth display columns.
+#
+# The width of a prefix is measured with strdisplaywidth() rather than by
+# adding up per-character widths, because a tab's width depends on where it
+# starts. Only ever called for a line already known to be too long, so the
+# per-character loop costs nothing in the common case.
+def ColumnBeyondWidth(line: string, maxwidth: number): number
+  var char_count = strchars(line)
+  var i = 1
+  while i <= char_count
+    var b = byteidx(line, i)
+    if b < 0
+      break
+    endif
+    if strdisplaywidth(strpart(line, 0, b)) > maxwidth
+      return byteidx(line, i - 1)
+    endif
+    i += 1
+  endwhile
+  return len(line)
+enddef
+
 # Where a file-level diagnostic points: the first line with any content, so
 # the highlight lands on real text rather than on leading blank lines.
 def FirstContentLine(lines: list<string>): number
@@ -1014,14 +1036,28 @@ export def GenerateReport(): list<dict<any>>
       endif
     endfor
 
-    # Max line length is byte-based, and skipped inside docstrings: a long
-    # JSON line usually cannot be wrapped without changing the payload.
-    if !is_body && max_len > 0 && len(line) > max_len
-      add(report, {
-        lnum: lnum, col: max_len + 1, end_col: len(line) + 1,
-        text: printf('Line is too long (%d > %d bytes)', len(line), max_len),
-        level: max_len_level,
-      })
+    # Max line length, measured in display columns - what the user actually
+    # sees. It used to count bytes, which halved the effective limit for any
+    # non-ASCII text: a Cyrillic step 83 columns wide was reported as 143.
+    #
+    # Skipped inside docstrings: a long JSON line usually cannot be wrapped
+    # without changing the payload being sent.
+    #
+    # strdisplaywidth() is only paid for on lines that could possibly be over
+    # the limit. Without tabs a character never occupies more cells than it
+    # takes bytes, so len() is a sound upper bound; a tab breaks that, hence
+    # the second test.
+    if !is_body && max_len > 0 && (len(line) > max_len || stridx(line, "\t") >= 0)
+      var width = strdisplaywidth(line)
+      if width > max_len
+        add(report, {
+          lnum: lnum,
+          col: ColumnBeyondWidth(line, max_len) + 1,
+          end_col: len(line) + 1,
+          text: printf('Line is too long (%d > %d columns)', width, max_len),
+          level: max_len_level,
+        })
+      endif
     endif
   endfor
 

@@ -4,7 +4,7 @@
     L12  c15 -22  Warn             Unused variable: payload
     L12  c25 -34  Error            Use 'call read' instead of 'callread'
     L13  c15 -24  Warn             Unused variable: unusedOne
-    L14  c121-150 Warn             Line is too long (149 > 120 bytes)
+    L14  c121-150 Warn             Line is too long (149 > 120 columns)
     L8   c1  -2   Error            Tabs are not allowed
     L9   c24 -27  Error            Trailing whitespace
 === 02_outlines_missing_examples.feature
@@ -83,8 +83,8 @@
 === 22_long_multibyte_message.feature
     L10  c15 -17  Warn             Header 'id' is defined in the Examples table but not used in the Scenario Outline.
     L4   c15 -19  Warn             Unused variable: base
-    L7   c121-144 Warn             Line is too long (143 > 120 bytes)
-    L7   c21 -143 Error            Placeholder '<переменнаяСОченьДлиннымИменемДляПроверкиОбрезкиПоШиринеЯчеек>' is not defined in the Examples table.
+    L7   c21 -239 Error            Placeholder '<переменнаяСОченьДлиннымИменемДляПроверкиОбрезкиПоШиринеЯчеекИЛимитаДлиныСтрокиИзмеряемогоВКолонкахАНеВБайтах>' is not defined in the Examples table.
+    L7   c220-240 Warn             Line is too long (131 > 120 columns)
 === 23_regex_metachars.feature
     L11  c15 -17  Warn             Header 'id' is defined in the Examples table but not used in the Scenario Outline.
     L11  c20 -23  Warn             Header 'a.b' is defined in the Examples table but not used in the Scenario Outline.
@@ -133,6 +133,6 @@
     L6   c5  -16  Error            'Background:' must come before the first 'Scenario:'
     L7   c15 -19  Warn             Unused variable: base
 === 30_multibyte_columns.feature
-    L14  c44 -56  Warn             Header 'лишний' is defined in the Examples table but not used in the Scenario Outline.
+    L15  c44 -56  Warn             Header 'лишний' is defined in the Examples table but not used in the Scenario Outline.
     L7   c15 -22  Warn             Unused variable: payload
     L7   c25 -53  Error            Unclosed '{'

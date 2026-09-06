@@ -69,10 +69,16 @@ You can customize the linter by adding `let g:variable_name = value` to your `vi
 For each rule, you can enable/disable it (`_rule`) and set its severity level (`_level`).
 Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintWarn` (uses `Todo` highlight group).
 
--   **Max line length:**
-    -   `g:karate_linter_max_line_length`: Max characters per line. Set to `0` to disable. Note: this check is byte-based for maximum compatibility.
+-   **Max line length:** measured in display columns — what you actually see,
+    with tabs expanded.
+    -   `g:karate_linter_max_line_length`: maximum columns per line. Set to `0`
+        to disable.
     -   `g:karate_linter_max_line_length_level`: Severity.
     -   Defaults: `120`, `'KarateLintWarn'`
+    -   This used to count bytes, which halved the effective limit for
+        non-ASCII text: a Cyrillic step 83 columns wide was reported as 143.
+        The highlight starts at the first character past the limit, on a
+        character boundary.
 
 -   **Tabs:** Disallow tab characters.
     -   `g:karate_linter_tabs_rule`: `1` or `0`.

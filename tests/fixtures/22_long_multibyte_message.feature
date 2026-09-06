@@ -4,7 +4,7 @@ Feature: long multibyte diagnostic
         * def base = 1
 
     Scenario Outline: placeholder with a long cyrillic name
-        Given path '<переменнаяСОченьДлиннымИменемДляПроверкиОбрезкиПоШиринеЯчеек>'
+        Given path '<переменнаяСОченьДлиннымИменемДляПроверкиОбрезкиПоШиринеЯчеекИЛимитаДлиныСтрокиИзмеряемогоВКолонкахАНеВБайтах>'
 
         Examples:
             | id |
