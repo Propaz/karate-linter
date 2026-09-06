@@ -409,12 +409,21 @@ def FindAllDocstringRanges(lines: list<string>): list<list<number>>
   return ranges
 enddef
 
+# Outlines without an Examples block, and Examples blocks without an outline.
+#
+# These were two functions walking the buffer separately and computing the
+# same four predicates on every line - eight regular expressions per line for
+# what is really one traversal. They are independent state machines over the
+# same input, so they share a pass now.
+#
 # Pure Vim, no subprocess. This used to shell out to awk on every keystroke;
 # the \C prefixes keep it case-sensitive exactly like awk was, regardless of
 # the user's 'ignorecase'.
-def FindInvalidOutlines(lines: list<string>, docstring_body: dict<bool>): list<number>
+def ScanOutlines(lines: list<string>, docstring_body: dict<bool>): dict<list<number>>
   var invalid: list<number> = []
-  var outline_start = 0
+  var orphaned: list<number> = []
+  var outline_start = 0        # an outline still waiting for its Examples
+  var outline_context = false  # an Examples here would belong to an outline
 
   for line_num in range(1, len(lines))
     if has_key(docstring_body, string(line_num))
@@ -426,54 +435,28 @@ def FindInvalidOutlines(lines: list<string>, docstring_body: dict<bool>): list<n
     var is_tag = line_text =~# '\C^[ 	]*@'
     var is_examples = line_text =~# '\C^[ 	]*Examples:'
 
+    # A new scenario or tag ends any pending outline and resets the
+    # expectation of an Examples block.
     if is_normal_scenario || is_tag
       if outline_start > 0
         add(invalid, outline_start)
         outline_start = 0
       endif
+      outline_context = false
     endif
+
     if is_outline
       if outline_start > 0
         add(invalid, outline_start)
       endif
       outline_start = line_num
-    endif
-    if is_examples && outline_start > 0
-      outline_start = 0
-    endif
-  endfor
-
-  if outline_start > 0
-    add(invalid, outline_start)
-  endif
-  return invalid
-enddef
-
-# Pure Vim, no subprocess. See the note on FindInvalidOutlines().
-def FindOrphanedExamples(lines: list<string>, docstring_body: dict<bool>): list<number>
-  var orphaned: list<number> = []
-  var outline_context = false
-
-  for line_num in range(1, len(lines))
-    if has_key(docstring_body, string(line_num))
-      continue
-    endif
-    var line_text = lines[line_num - 1]
-    var is_outline = line_text =~# '\C^[ 	]*Scenario Outline:'
-    var is_normal_scenario = line_text =~# '\C^[ 	]*Scenario:' && !is_outline
-    var is_tag = line_text =~# '\C^[ 	]*@'
-    var is_examples = line_text =~# '\C^[ 	]*Examples:'
-
-    # A new scenario or tag resets the expectation for 'Examples'.
-    if is_normal_scenario || is_tag
-      outline_context = false
-    endif
-    # A new 'Scenario Outline' starts the context.
-    if is_outline
       outline_context = true
     endif
 
     if is_examples
+      if outline_start > 0
+        outline_start = 0
+      endif
       if outline_context
         outline_context = false
       else
@@ -481,7 +464,12 @@ def FindOrphanedExamples(lines: list<string>, docstring_body: dict<bool>): list<
       endif
     endif
   endfor
-  return orphaned
+
+  if outline_start > 0
+    add(invalid, outline_start)
+  endif
+
+  return {invalid: invalid, orphaned: orphaned}
 enddef
 
 # One Examples table's internal consistency: duplicated column names, data
@@ -1064,20 +1052,24 @@ export def GenerateReport(): list<dict<any>>
   extend(report, FindUnusedVariables(buffer_lines, docstring_body))
   extend(report, LintDelimiters(buffer_lines, docstring_body))
 
-  if RuleOn('missing_examples')
-    var level = RuleLevel('missing_examples')
-    for invalid in FindInvalidOutlines(buffer_lines, docstring_body)
-      AddLineDiag(report, buffer_lines, invalid,
-        "'Scenario Outline' without a corresponding 'Examples' block", level)
-    endfor
-  endif
+  if RuleOn('missing_examples') || RuleOn('orphaned_examples')
+    var outline_scan = ScanOutlines(buffer_lines, docstring_body)
 
-  if RuleOn('orphaned_examples')
-    var level = RuleLevel('orphaned_examples')
-    for orphan in FindOrphanedExamples(buffer_lines, docstring_body)
-      AddLineDiag(report, buffer_lines, orphan,
-        "Found 'orphaned' 'Examples' block without 'Scenario Outline'", level)
-    endfor
+    if RuleOn('missing_examples')
+      var level = RuleLevel('missing_examples')
+      for invalid in outline_scan.invalid
+        AddLineDiag(report, buffer_lines, invalid,
+          "'Scenario Outline' without a corresponding 'Examples' block", level)
+      endfor
+    endif
+
+    if RuleOn('orphaned_examples')
+      var level = RuleLevel('orphaned_examples')
+      for orphan in outline_scan.orphaned
+        AddLineDiag(report, buffer_lines, orphan,
+          "Found 'orphaned' 'Examples' block without 'Scenario Outline'", level)
+      endfor
+    endif
   endif
 
   # Derived from the docstring state tracked above: the block is unclosed only
@@ -1175,7 +1167,17 @@ export def UpdateDiagnostics()
     return
   endif
 
-  var sign_group = 'karate_linter_' .. bufnr
+  # Collect first, apply in three calls. prop_add_list() and sign_placelist()
+  # replace two function calls per diagnostic, which on a file with a few
+  # hundred findings is the whole render.
+  #
+  # prop_add_list() takes [lnum, col, end_lnum, end_col] with an exclusive
+  # end_col - exactly the 'end_col' the rules already produce, since it is
+  # col + length.
+  var error_ranges: list<list<number>> = []
+  var warn_ranges: list<list<number>> = []
+  var worst_on_line: dict<bool> = {}
+
   for issue in report
     # Defence in depth: a rule that computes a bad column must not be able to
     # abort the render for the whole buffer, which is what an E964 out of
@@ -1185,14 +1187,44 @@ export def UpdateDiagnostics()
     endif
 
     var is_error = issue.level == ERROR_LEVEL
-    prop_add(issue.lnum, issue.col, {
-      length: issue.end_col - issue.col,
-      type: is_error ? 'karate_lint_error' : 'karate_lint_warn',
-      bufnr: bufnr,
-    })
-    sign_place(SIGN_ID_BASE + issue.lnum, sign_group,
-      is_error ? 'KarateLintError' : 'KarateLintWarn', bufnr, {lnum: issue.lnum})
+    if is_error
+      add(error_ranges, [issue.lnum, issue.col, issue.lnum, issue.end_col])
+    else
+      add(warn_ranges, [issue.lnum, issue.col, issue.lnum, issue.end_col])
+    endif
+
+    # A sign id is derived from the line number, so a line with more than one
+    # diagnostic only ever gets one sign. Which icon that was used to depend
+    # on the order the rules happened to run in, meaning a warning could mask
+    # an error; now the worse level always wins.
+    var key = string(issue.lnum)
+    if is_error || !has_key(worst_on_line, key)
+      worst_on_line[key] = is_error
+    endif
   endfor
+
+  if !empty(error_ranges)
+    prop_add_list({type: 'karate_lint_error', bufnr: bufnr}, error_ranges)
+  endif
+  if !empty(warn_ranges)
+    prop_add_list({type: 'karate_lint_warn', bufnr: bufnr}, warn_ranges)
+  endif
+
+  var sign_group = 'karate_linter_' .. bufnr
+  var signs: list<dict<any>> = []
+  for [key, is_error] in items(worst_on_line)
+    var line_number = str2nr(key)
+    add(signs, {
+      id: SIGN_ID_BASE + line_number,
+      group: sign_group,
+      name: is_error ? 'KarateLintError' : 'KarateLintWarn',
+      buffer: bufnr,
+      lnum: line_number,
+    })
+  endfor
+  if !empty(signs)
+    sign_placelist(signs)
+  endif
 enddef
 
 

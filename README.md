@@ -42,6 +42,9 @@ The linter runs automatically as you type. When an issue is detected, the line w
 -   `>>` for errors
 -   `W>` for warnings
 
+A line with more than one finding gets a single sign, and an error outranks a
+warning there.
+
 The message for the line under the cursor is shown in the command line; see [Seeing the message](#seeing-the-message).
 
 ## Commands

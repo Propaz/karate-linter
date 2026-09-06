@@ -157,7 +157,28 @@ call s:Fixture('30_multibyte_columns.feature')
 call s:Ok('190 bytes but 110 columns is not reported',
     \ len(filter(KarateLinterReport(), 'v:val.text =~# "too long"')), 0)
 
-" --- 9. No stray public surface beyond the documented entry point ---
+" --- 9. One sign per line, and an error outranks a warning there ---
+" Sign ids are derived from the line number, so a line with several
+" diagnostics only gets one sign. Which icon it was used to depend on the
+" order the rules ran in, so a warning could mask an error.
+call add(s:out, '--- sign level per line')
+call s:Fixture('14_parens_bad.feature')
+function! s:SignOn(lnum) abort
+    let placed = sign_getplaced(bufnr('%'), {'group': 'karate_linter_' . bufnr('%'), 'lnum': a:lnum})
+    if empty(placed) || empty(placed[0].signs)
+        return '<none>'
+    endif
+    return placed[0].signs[0].name
+endfunction
+" L11 carries both an unused-variable warning and an unclosed-paren error.
+let s:levels = map(filter(KarateLinterReport(), 'v:val.lnum == 11'), 'v:val.level')
+call s:Ok('L11 really has a warning and an error',
+    \ sort(copy(s:levels)), ['KarateLintError', 'KarateLintWarn'])
+call s:Ok('the error wins the gutter', s:SignOn(11), 'KarateLintError')
+call s:Ok('one sign per line, not per diagnostic',
+    \ s:SignCount(), len(uniq(sort(map(KarateLinterReport(), 'v:val.lnum')))))
+
+" --- 10. No stray public surface beyond the documented entry point ---
 call add(s:out, '--- public api')
 call s:Ok('KarateLinterReport exists', exists('*KarateLinterReport'), 1)
 call s:Ok('no test-only SID hook left behind', exists('*KarateLinterSid'), 0)
