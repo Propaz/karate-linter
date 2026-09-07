@@ -138,3 +138,5 @@
     L7   c25 -53  Error            Unclosed '{'
 === 31_autoformat_docstrings.feature
     (no issues)
+=== 32_indent_rebuild.feature
+    (no issues)

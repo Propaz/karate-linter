@@ -39,6 +39,7 @@ const DEFAULTS = {
   karate_linter_no_space_after_keyword_rule: 1,
   karate_linter_no_space_after_keyword_level: 'KarateLintError',
   karate_linter_auto_format_on_save: 1,
+  karate_linter_indent_width: 4,
   karate_linter_missing_examples_rule: 1,
   karate_linter_missing_examples_level: 'KarateLintError',
   karate_linter_call_read_space_rule: 1,
@@ -114,6 +115,7 @@ def g:KarateLinterReport(): list<dict<any>>
 enddef
 
 command! -bar KarateLintCheck linter.ShowLoclist()
+command! -bar KarateFormat linter.FormatBuffer()
 command! -bar KarateFmtJson linter.FormatJsonInDocstring()
 command! -bar KarateTabsToSpaces linter.ReplaceTabsWithSpaces()
 

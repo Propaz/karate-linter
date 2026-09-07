@@ -1,10 +1,10 @@
 Feature: docstrings survive auto-format on save
 
     A clean file, so auto-format-on-save actually runs: it refuses while the
-    buffer has errors. Every block below has body indentation of its own that
-    gg=G would rewrite, and there is more than one of them - the restore loop
-    used to abort on the first block it tried to replace, which left the rest
-    of the file formatted and unrestored.
+    buffer has errors. Every block below has body indentation of its own, and
+    there is more than one of them - the restore loop that gg=G needed used to
+    abort on the first block it spliced, leaving the rest of the file
+    reindented and unrestored. This file must come back untouched.
 
     Background:
         * def payload = 1
