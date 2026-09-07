@@ -1781,19 +1781,122 @@ export def FormatBuffer()
   echomsg printf('[Karate] Formatted: %d line(s) reindented, %d fixed.', moved, fixed)
 enddef
 
-export def FormatJsonInDocstring()
-  var cursor_lnum = line('.')
+# The docstring block containing lnum, as [open, close], or [0, 0].
+#
+# The delimiters are paired from the top of the file rather than searched for
+# outwards from the cursor. With the cursor between two blocks a backwards
+# search finds a *closing* delimiter and a forwards search an *opening* one,
+# and the two bracket the cursor exactly as a real block would; this used to
+# be two searches per caller. FmtJson only escaped it because a step line does
+# not start with `{`.
+def DocstringBlockAt(lnum: number): list<number>
+  for range_pair in FindAllDocstringRanges(getline(1, '$'))
+    if lnum >= range_pair[0] && lnum <= range_pair[1]
+      return range_pair
+    endif
+  endfor
+  return [0, 0]
+enddef
 
-  var start_line = search(DOCSTRING_PATTERN, 'bnW')
-  if start_line == 0 || start_line > cursor_lnum
+# Gherkin dedents every body line by the column of the opening `"""`, but it
+# can only remove whitespace that is actually there. A body sitting to the
+# left of its own delimiter is therefore clamped: with the delimiter at column
+# 8 and body lines at 4, 6 and 8, Karate receives all three at column 0 and
+# the nesting visible on screen is not in the string at all.
+#
+# Shifting the block right until its least-indented line meets the delimiter
+# makes the payload carry exactly the structure the file shows. That *changes*
+# what Karate receives, which is why this is a separate command: the save path
+# and `:KarateFormat` guarantee the payload is untouched, and this edits it on
+# purpose. Same bargain as `:KarateFmtJson`.
+#
+# Right only. Indentation beyond the delimiter's column is preserved by
+# Gherkin, so it is real payload - pulling an over-indented block left would
+# quietly rewrite a YAML or plain-text docstring.
+export def AlignDocstringBody()
+  if !&modifiable
+    echohl WarningMsg
+    echo '[Karate] Buffer is not modifiable.'
+    echohl NONE
+    return
+  endif
+
+  var fence = ForeignFence()
+  if fence > 0
+    echohl WarningMsg
+    echo printf('[Karate] Line %d: this plugin only understands a bare """ fence; not aligning.', fence)
+    echohl NONE
+    return
+  endif
+
+  var block = DocstringBlockAt(line('.'))
+  if block[0] == 0
     echohl WarningMsg
     echo '[Karate] Cursor is not inside a docstring block.'
     echohl NONE
     return
   endif
 
-  var end_line = search(DOCSTRING_PATTERN, 'nW')
-  if end_line == 0 || end_line < cursor_lnum
+  var base = strlen(matchstr(getline(block[0]), '^\s*'))
+
+  # The least-indented non-blank line decides the shift. A blank line has no
+  # indentation to speak of and must not drag the whole block left.
+  var min_indent = -1
+  for lnum in range(block[0] + 1, block[1] - 1)
+    var line = getline(lnum)
+    if line =~# BLANK_LINE
+      continue
+    endif
+    if line =~# '^ *\t'
+      # Measuring a tab in spaces means guessing 'tabstop', and shifting by
+      # spaces would leave the payload indented with both. The width is the
+      # user's to decide: :KarateTabsToSpaces first, then align.
+      echohl WarningMsg
+      echo printf('[Karate] Line %d is indented with a tab; run :KarateTabsToSpaces first.', lnum)
+      echohl NONE
+      return
+    endif
+    var lead = strlen(matchstr(line, '^ *'))
+    if min_indent < 0 || lead < min_indent
+      min_indent = lead
+    endif
+  endfor
+
+  if min_indent < 0
+    echomsg '[Karate] Docstring is empty, nothing to align.'
+    return
+  endif
+
+  var shift = base - min_indent
+  if shift <= 0
+    echomsg printf('[Karate] Docstring body already starts at column %d; nothing to do.', base)
+    return
+  endif
+
+  var pad = repeat(' ', shift)
+  var changed = 0
+  for lnum in range(block[0] + 1, block[1] - 1)
+    var line = getline(lnum)
+    if line =~# BLANK_LINE
+      continue
+    endif
+    setline(lnum, pad .. line)
+    changed += 1
+  endfor
+
+  if changed > 0
+    # Body lines moved, so anything anchored in them did too - and a line can
+    # cross max_line_length on the way right.
+    UpdateDiagnostics()
+  endif
+  echomsg printf('[Karate] Docstring body shifted right by %d; %d line(s).', shift, changed)
+enddef
+
+export def FormatJsonInDocstring()
+  var block = DocstringBlockAt(line('.'))
+  var start_line = block[0]
+  var end_line = block[1]
+  if start_line == 0
     echohl WarningMsg
     echo '[Karate] Cursor is not inside a docstring block.'
     echohl NONE

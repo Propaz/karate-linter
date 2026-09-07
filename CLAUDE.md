@@ -83,6 +83,19 @@ after a comment" — and rebuild it with invented content.
    reindenting. Widening `DOCSTRING_PATTERN` instead would move every
    docstring rule at once, so it needs its own change and its own baseline.
 
+   **Two classes of command, and the line between them is the payload.**
+   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical.
+   `FormatJsonInDocstring()` and `AlignDocstringBody()` rewrite it on purpose,
+   so they are explicit, per-block and cursor-driven, and **must never be
+   wired into an autocommand**. Anything that edits a payload belongs in the
+   second class, however tempting it looks as a save-time fix.
+
+   Note also that Gherkin's dedent *clamps*: it cannot remove more whitespace
+   than a line has, so a body indented less than its own delimiter arrives
+   flattened. `s:Payload()` in `check_format.vim` models that; without the
+   clamp it sliced into the content of such a line and the assertion was
+   comparing nonsense.
+
 5. **Never echo from `UpdateDiagnostics()`.** It runs from the buffer-load and
    buffer-write autocommands, where the cursor is not placed yet and Vim is
    about to print its own message; a second one forces a `Press ENTER` prompt.

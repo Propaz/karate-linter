@@ -59,7 +59,12 @@ function! s:Payload(lines) abort
             continue
         endif
         if l:inside
-            call add(l:res, strpart(l:line, l:base))
+            " Gherkin removes the delimiter's indentation, but it cannot
+            " remove whitespace that is not there: a line sitting left of its
+            " own delimiter is simply dedented as far as it goes. Without the
+            " clamp this cut into the content of such a line.
+            let l:lead = strlen(matchstr(l:line, '^\s*'))
+            call add(l:res, strpart(l:line, l:base < l:lead ? l:base : l:lead))
         endif
     endfor
     return l:res
@@ -403,6 +408,92 @@ else
     call s:Ok('non-json block refused', s:msg =~# 'does not look like', v:true)
     call s:Ok('non-json block untouched', getline(1, '$'), s:before)
 endif
+
+" --- 10. :KarateAlignDocstring ---
+" A body left of its own delimiter is clamped by Gherkin's dedent, so Karate
+" receives it flat and the nesting on screen is not in the string. Realigning
+" it *changes* the payload, which is why it is a command and not part of a
+" save -- and why the automatic formatter has to leave the fixture alone.
+call add(s:out, '--- KarateAlignDocstring')
+let s:f33 = s:root . '/tests/fixtures/33_docstring_hanging_left.feature'
+let s:orig33 = readfile(s:f33)
+execute 'edit! ' . fnameescape(s:f33)
+doautocmd BufWinEnter
+call s:Ok('hanging fixture is clean', get(b:, 'karate_has_errors', -1), 0)
+doautocmd BufWritePre
+call s:Ok('a save leaves the hanging body alone', getline(1, '$'), s:orig33)
+
+" What Karate gets before: the whole block flattened onto column 0.
+call s:Ok('payload starts out flat',
+    \ s:Payload(s:orig33)[0 : 4],
+    \ ['for (var i = 0; i < 3; i++) {', 'if (i > 1) {', 'total = total + i;', '}', '}'])
+
+call cursor(16, 1)
+let s:msg = execute('KarateAlignDocstring')
+call s:Ok('reports the shift', s:msg =~# 'shifted right by 4', v:true)
+call s:Ok('block anchored on the delimiter', getline(14, 20), [
+    \ '        """',
+    \ '        for (var i = 0; i < 3; i++) {',
+    \ '          if (i > 1) {',
+    \ '            total = total + i;',
+    \ '          }',
+    \ '        }',
+    \ '        """'])
+" And after: the nesting the file shows is now in the string.
+call s:Ok('payload carries the nesting',
+    \ s:Payload(getline(1, '$'))[0 : 4],
+    \ ['for (var i = 0; i < 3; i++) {', '  if (i > 1) {', '    total = total + i;', '  }', '}'])
+call s:Ok('still lints clean', len(KarateLinterReport()), 0)
+
+" Idempotent, and a save must not undo it: the delimiter is already at the
+" step level, so the indent pass has a shift of zero and skips the body.
+let s:aligned = getline(1, '$')
+call s:Ok('second run is a no-op',
+    \ execute('KarateAlignDocstring') =~# 'already starts at column 8', v:true)
+doautocmd BufWritePre
+call s:Ok('a save does not undo the alignment', getline(1, '$'), s:aligned)
+
+" The other answer: a body already anchored on its delimiter is not touched.
+call cursor(25, 1)
+let s:before = getline(1, '$')
+call s:Ok('anchored body refused',
+    \ execute('KarateAlignDocstring') =~# 'already starts at column 8', v:true)
+call s:Ok('anchored body untouched', getline(1, '$'), s:before)
+
+" Outside a docstring, and -- the case two outward searches got wrong -- on a
+" step line *between* two of them, which a backwards and a forwards search
+" bracket exactly as they would a real block.
+call cursor(10, 1)
+call s:Ok('outside a docstring: refused',
+    \ execute('KarateAlignDocstring') =~# 'not inside a docstring', v:true)
+call cursor(21, 1)
+call s:Ok('between two docstrings: refused',
+    \ execute('KarateAlignDocstring') =~# 'not inside a docstring', v:true)
+call s:Ok('between two docstrings: FmtJson too',
+    \ execute('KarateFmtJson') =~# 'not inside a docstring', v:true)
+call s:Ok('nothing was touched by any of that', getline(1, '$'), s:before)
+
+" A tab in the body cannot be measured without guessing 'tabstop', and
+" shifting by spaces would leave the payload indented with both.
+enew! | file /tmp/karate_align_tab.feature
+call setline(1, ['Feature: f', '', 'Background:', '* def a = 1', '', 'Scenario: s',
+    \ '        * eval', '        """', "\tvar x = 1;", '        """', 'Then match a == 1'])
+call cursor(9, 1)
+let s:before = getline(1, '$')
+call s:Ok('tab-indented body refused', execute('KarateAlignDocstring') =~# 'KarateTabsToSpaces', v:true)
+call s:Ok('tab-indented body untouched', getline(1, '$'), s:before)
+
+" A blank line must not drag the shift to zero, and must not be padded into a
+" line of trailing whitespace.
+enew! | file /tmp/karate_align_blank.feature
+call setline(1, ['Feature: f', '', 'Background:', '* def a = 1', '', 'Scenario: s',
+    \ '        * eval', '        """', '    first();', '', '      second();',
+    \ '        """', 'Then match a == 1'])
+call cursor(9, 1)
+call s:Ok('blank line did not stop the shift',
+    \ execute('KarateAlignDocstring') =~# 'shifted right by 4', v:true)
+call s:Ok('body shifted', getline(9, 11), ['        first();', '', '          second();'])
+call s:Ok('blank line still blank', getline(10), '')
 
 call add(s:out, '')
 call add(s:out, s:fail == 0 ? 'RESULT: ALL OK' : printf('RESULT: %d FAILURE(S)', s:fail))

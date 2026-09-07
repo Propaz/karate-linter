@@ -117,6 +117,7 @@ enddef
 command! -bar KarateLintCheck linter.ShowLoclist()
 command! -bar KarateFormat linter.FormatBuffer()
 command! -bar KarateFmtJson linter.FormatJsonInDocstring()
+command! -bar KarateAlignDocstring linter.AlignDocstringBody()
 command! -bar KarateTabsToSpaces linter.ReplaceTabsWithSpaces()
 
 
