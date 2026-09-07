@@ -56,6 +56,12 @@ sed 's/^/  /' tests/format.txt
 grep -q 'RESULT: ALL OK' tests/format.txt || status=1
 
 echo
+echo "== plugin reload =="
+"$VIM" -Nu NONE -es -S tests/check_reload.vim
+sed 's/^/  /' tests/reload.txt
+grep -q 'RESULT: ALL OK' tests/reload.txt || status=1
+
+echo
 echo "== location list =="
 "$VIM" -Nu NONE -es -S tests/check_loclist.vim
 sed 's/^/  /' tests/loclist.txt
