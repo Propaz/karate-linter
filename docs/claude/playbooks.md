@@ -52,6 +52,50 @@ The baseline diff is the review. Work so that it is small and readable:
 
 ---
 
+## Changing the formatter
+
+The formatter is three steps in `AutoFormatOnSave()`: `FixupPass()`, a lint,
+then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
+
+1. **Indent levels live in one place**, `ComputeLevels()`, which returns one
+   level per line. `ApplyIndent()` only turns levels into leading whitespace.
+   A new keyword is a line in `ComputeLevels()`, nothing else.
+
+2. **Fixtures come in pairs here too**: one misindented file that must be
+   rebuilt (fixture 32, asserted line by line) and correctly formatted files
+   that must come back *untouched and unmodified* (the idempotence section).
+   The second kind is what catches a formatter that "works" by rewriting
+   everything.
+
+3. **Assert the payload.** `s:Payload()` in `check_format.vim` dedents every
+   docstring body by its opening delimiter, which is the string Karate
+   actually receives. It must be identical before and after. This is the one
+   assertion that would have caught the delimiter/body split that shipped in
+   2.0.0.
+
+4. **Check `&modified`.** A formatter that touches a file it should have left
+   alone shows up here before it shows up anywhere else.
+
+5. **Anything that adds or removes lines needs more than this.** The indent
+   pass is line-preserving, which is why it can write with `setline()` and why
+   diagnostics only need their columns refreshed afterwards. A pass that
+   changes the line count has to deal with the ranges collected before it.
+
+6. **Probe the ends of the file.** Both bugs found in the review of the first
+   version were there: a tag or comment with nothing after it inherited from a
+   `next_level` seeded with 0 and was pulled out to column 0, and an
+   unrecognised fence was only caught in the middle of a file by accident. The
+   fixtures all have well-formed middles.
+
+7. **If the structure is uncertain, do nothing — including the fixups.** The
+   error gate and `ForeignFence()` both sit in front of the whole formatter for
+   the same reason: when the docstring boundaries are unknown, `ExpandTabs()`
+   and `StripTrailingWhitespace()` corrupt a payload just as surely as
+   `ApplyIndent()` would. Adding a fourth pass means deciding where in that
+   order it goes, and the answer is almost always "after the gate".
+
+---
+
 ## Performance work
 
 1. **Profile first.**
@@ -148,12 +192,30 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | A quickfix item's `filename` always jumps | It is resolved against the current directory, so for an unnamed buffer the entry is still `valid: 1` but jumping does nothing at all. Use `bufnr`. |
 | `execute 'N,Mdelete _'` runs | `E1050: Colon required before a range` in Vim9. Same for `%s`. `deletebufline()` sidesteps it. |
 | `sort(list, 'n')` sorts numeric strings | Only sorts real numbers. On `['114', '24']` it is a no-op and returns the input order. |
+| `gg=G` reindents a `.feature` file | With no `'indentexpr'` and no `'equalprg'` — a Vim with no gherkin indent plugin — `=` falls back to the internal C indenter and flattens the file to column 0. Under `'noexpandtab'` it indents with tabs. |
+| `doautocmd BufWritePre` fires `*.feature` autocommands | The pattern is matched against the buffer's **name**, so nothing fires in an unnamed buffer. A probe of the formatter did nothing at all and looked like "the formatter left it alone". `:file /tmp/x.feature` first. |
+| The engine recognises every Gherkin docstring fence | `DOCSTRING_PATTERN` is `^\s*"""\s*$`. `"""json` produces a false *Unclosed DocString*; `'''` is not seen at all, lints clean, and used to have its body reindented as though it were steps. |
+| `&modified == 0` proves the formatter wrote nothing | Only for a buffer loaded from disk. A buffer built with `setline()` in a test is already modified before the formatter runs, so the assertion fails whatever the code does. Compare `b:changedtick` across the save instead — it asserts the stronger thing. |
 
 **A probe whose input already looks like the expected answer proves nothing.**
 `sort(['24', '42', '114'], 'n')` came back in the same order and was read as
 success; the list had been sorted to begin with. The same mistake produced a
 green location-list test that jumped to the line the cursor was already on.
 Give a probe an input that can only survive if the code works.
+
+The same rule applies to assertions, and it is worth more there. The first
+version of `check_format.vim` asserted that lines outside the docstrings had
+*changed* — which was green precisely because the formatter was flattening
+every one of them to column 0. **Assert the value, not that something moved.**
+Where an exact value is genuinely unknown, an assertion that a *correctly
+formatted* input comes back untouched catches the same class of bug: four such
+fixtures now sit in the idempotence section, and all four failed against the
+old engine.
+
+A gate is the other shape of this trap. A test for "the formatter refuses on a
+broken file" must use an input the formatter *would* visibly change — the
+refusal check used a line that was already at the right indentation, so it
+passed whether the gate held or not.
 
 The pattern for a probe: write a small script that prints results with
 `writefile()`, run it with `vim -Nu NONE -es -S`, read the file.

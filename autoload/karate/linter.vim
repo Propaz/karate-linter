@@ -1440,76 +1440,345 @@ export def ShowLoclist()
 enddef
 
 
-# --- Auto-formatting on save ---------------------------------------------
+# --- Formatting ----------------------------------------------------------
 
-def SmartAutoFormat()
-  var save_cursor = getcurpos()
+# The indentation is computed here instead of being delegated to `=`, because
+# `=` does not know what Gherkin is:
+#
+#   - with no 'indentexpr' and no 'equalprg' - a Vim without a gherkin indent
+#     plugin, which is the common case - `=` falls back to the internal C
+#     indenter, which flattens a .feature file to column 0. On every save.
+#   - with an indent plugin but 'noexpandtab' (Vim's default) it indents with
+#     tabs, and this plugin's own `tabs` rule is an Error, so the formatter
+#     reported four fresh errors on lines the user had not touched - and the
+#     error gate below then refused every later save.
+#   - it re-indented the `"""` delimiters while the body was restored
+#     verbatim. Gherkin strips the opening delimiter's indentation from each
+#     body line, so pulling them apart changes the string Karate receives.
+#
+# Owning the computation makes the result identical on every setup and lets
+# the tests assert it line by line rather than assert that "something moved".
 
-  # 1. Store the original content of every docstring block.
-  #
-  # A list in file order, not a dictionary keyed by line number: the keys were
-  # strings, and sort(keys(), 'n') does not sort a list of strings at all. It
-  # returned them in the dictionary's own order and looked like it had worked.
-  var blocks: list<dict<any>> = []
-  for range_pair in FindAllDocstringRanges(getline(1, '$'))
-    var start_lnum = range_pair[0]
-    var end_lnum = range_pair[1]
-    add(blocks, {
-      start: start_lnum,
-      body: end_lnum - start_lnum > 1 ? getline(start_lnum + 1, end_lnum - 1) : [],
-    })
-  endfor
+# Structural level of a line, in indent units, plus three that are not levels.
+const LEVEL_PAYLOAD = -1   # docstring body: shifted with its delimiter
+const LEVEL_INHERIT = -2   # tag or comment: takes the level of what follows
+const LEVEL_BLANK = -3
 
-  # 2. Format the whole file.
-  silent! normal! gg=G
+const FEATURE_LINE = '\C^\s*Feature:'
+const EXAMPLES_LINE = '\C^\s*\%(Examples\|Scenarios\):'
+const SCENARIO_LINE =
+  '\C^\s*\%(Scenario Outline\|Scenario Template\|Scenario\|Background\|Example\):'
+const TABLE_LINE = '^\s*|'
+const TAG_OR_COMMENT_LINE = '^\s*[@#]'
+const BLANK_LINE = '^\s*$'
 
-  # 3. Put the original docstring content back. Each block is replaced by
-  # exactly as many lines as are removed, so the positions collected in step 1
-  # stay valid as the loop walks down the file.
-  for block in blocks
-    var start_lnum: number = block.start
-    var inner_save = getcurpos()
-    cursor(start_lnum + 1, 1)
-    var end_lnum = search(DOCSTRING_PATTERN, 'W')
-    setpos('.', inner_save)
+# Fences the engine does not recognise. DOCSTRING_PATTERN matches only a bare
+# `"""` alone on its line, so everywhere else in the engine a fence carrying a
+# content type (`"""json`) or Gherkin's `'''` is not a docstring boundary at
+# all - which means the block boundaries are unknown, and the whole formatter
+# has to keep its hands off the file rather than guess.
+#
+# Both of these were live. `'''` linted clean and the indent pass then moved
+# the delimiter without its body, changing the string Karate receives - the
+# exact failure invariant 4 exists to prevent. `"""json` was already blocked,
+# but only by accident: it produces a false 'Unclosed DocString' error, and
+# the error gate caught it.
+const FOREIGN_FENCE = "^\\s*\"\"\"\\s*\\S\\|^\\s*'''"
 
-    if end_lnum == 0
+def IndentWidth(): number
+  var width = get(g:, 'karate_linter_indent_width', 4)
+  return width > 0 ? width : 4
+enddef
+
+def ComputeLevels(lines: list<string>): list<number>
+  var levels: list<number> = []
+  var in_body = false
+  var in_scenario = false
+  var seen_feature = false
+
+  for line in lines
+    # Inside a docstring nothing is Karate syntax, not even a line that looks
+    # like a step or a table row, so this test comes first.
+    if in_body
+      if line =~# DOCSTRING_PATTERN
+        add(levels, 2)
+        in_body = false
+      else
+        add(levels, LEVEL_PAYLOAD)
+      endif
       continue
     endif
-    if end_lnum - start_lnum > 1
-      # deletebufline() instead of :execute with a range. Vim9 requires a
-      # colon before a range even inside an :execute string, and without it
-      # this threw E1050 out of BufWritePre - which aborted the loop and left
-      # every docstring in the file with gg=G's indentation.
-      deletebufline('%', start_lnum + 1, end_lnum - 1)
+
+    if line =~# DOCSTRING_PATTERN
+      add(levels, 2)
+      in_body = true
+    elseif line =~# BLANK_LINE
+      add(levels, LEVEL_BLANK)
+    elseif line =~# TAG_OR_COMMENT_LINE
+      add(levels, LEVEL_INHERIT)
+    elseif line =~# FEATURE_LINE
+      add(levels, 0)
+      seen_feature = true
+    elseif line =~# EXAMPLES_LINE
+      # Before SCENARIO_LINE only for readability: both require the colon
+      # immediately after the keyword, so 'Examples:' cannot match 'Example:'.
+      add(levels, 2)
+    elseif line =~# SCENARIO_LINE
+      add(levels, 1)
+      in_scenario = true
+    elseif line =~# TABLE_LINE
+      add(levels, 3)
+    elseif line =~# STEP_PATTERN
+      add(levels, 2)
+    else
+      # Free text: a description under Feature, or one under the scenario.
+      add(levels, in_scenario ? 2 : (seen_feature ? 1 : 0))
     endif
-    append(start_lnum, block.body)
   endfor
 
-  setpos('.', save_cursor)
+  # A tag or a comment annotates whatever follows it, so it takes that line's
+  # level. Walking backwards resolves a run of them in one pass, and blank
+  # lines in between are stepped over rather than breaking the run.
+  var next_level = -1
+  for i in range(len(levels) - 1, 0, -1)
+    if levels[i] == LEVEL_INHERIT
+      levels[i] = next_level >= 0 ? next_level : LEVEL_INHERIT
+    elseif levels[i] >= 0
+      next_level = levels[i]
+    endif
+  endfor
+
+  # A run at the end of the file has nothing to annotate, so it keeps the
+  # level of what it follows. Seeding the pass above with 0 instead looked
+  # equivalent and was not: it pulled a note written under the last step, and
+  # a block of commented-out scenarios, out to column 0 on every save.
+  var prev_level = 0
+  for i in range(len(levels))
+    if levels[i] == LEVEL_INHERIT
+      levels[i] = prev_level
+    elseif levels[i] >= 0
+      prev_level = levels[i]
+    endif
+  endfor
+
+  return levels
+enddef
+
+# Rewrite the leading whitespace of every line to match the structure.
+# Returns the number of lines changed; only those are written, so a file that
+# is already formatted is not marked modified and undo stays clean.
+def ApplyIndent(): number
+  var lines = getline(1, '$')
+  var levels = ComputeLevels(lines)
+  var width = IndentWidth()
+  var changed = 0
+  var shift = 0
+  var in_body = false
+
+  for i in range(len(lines))
+    var line = lines[i]
+    var level = levels[i]
+    var want: string
+
+    if level == LEVEL_BLANK
+      want = ''
+    elseif level == LEVEL_PAYLOAD
+      # Payload, not syntax. It moves by exactly the amount its opening
+      # delimiter moved, so the string Karate ends up with is unchanged.
+      # Purely textual, so it never rewrites a tab into spaces, and a blank
+      # line is left alone rather than being given trailing whitespace.
+      if shift == 0 || line =~# BLANK_LINE
+        continue
+      elseif shift > 0
+        want = repeat(' ', shift) .. line
+      else
+        want = strpart(line, strlen(matchstr(line, '^ \{,' .. -shift .. '}')))
+      endif
+    else
+      var lead = matchstr(line, '^\s*')
+      want = repeat(' ', level * width) .. strpart(line, strlen(lead))
+
+      if line =~# DOCSTRING_PATTERN
+        if !in_body
+          shift = level * width - strlen(lead)
+        endif
+        in_body = !in_body
+      endif
+    endif
+
+    if want ==# line
+      continue
+    endif
+    setline(i + 1, want)
+    changed += 1
+  endfor
+
+  return changed
+enddef
+
+# Tabs and trailing whitespace are the only two things the linter reports
+# that can be fixed mechanically - and both are Error level, which is what
+# used to stop the formatter from running at all: a single stray trailing
+# space meant a save reformatted nothing and said nothing about why.
+def ExpandTabs(): number
+  var spaces = repeat(' ', &shiftwidth > 0 ? &shiftwidth : 4)
+  var changed = 0
+
+  for lnum in range(1, line('$'))
+    var line = getline(lnum)
+    if stridx(line, "\t") < 0
+      continue
+    endif
+    setline(lnum, substitute(line, '\t', spaces, 'g'))
+    changed += 1
+  endfor
+
+  return changed
+enddef
+
+def StripTrailingWhitespace(): number
+  var lines = getline(1, '$')
+
+  # Docstring bodies are payload and the trailing-space rule does not look
+  # inside them, so neither does the fix: trailing whitespace there is part
+  # of the string being sent.
+  var payload: list<bool> = repeat([false], len(lines))
+  for range_pair in FindAllDocstringRanges(lines)
+    for lnum in range(range_pair[0] + 1, range_pair[1] - 1)
+      payload[lnum - 1] = true
+    endfor
+  endfor
+
+  var changed = 0
+  for i in range(len(lines))
+    if payload[i] || lines[i] !~# '\s\+$'
+      continue
+    endif
+    setline(i + 1, substitute(lines[i], '\s\+$', '', ''))
+    changed += 1
+  endfor
+
+  return changed
+enddef
+
+# Line number of the first fence the engine cannot place, or 0. Recognised
+# docstring bodies are skipped: a `'''` inside a real `"""` block is payload,
+# not a fence, and refusing to format the file over it would be wrong.
+def ForeignFence(): number
+  # A C-level scan of the whole buffer first. Almost no file contains either
+  # fence, and the payload map below cost 3.8 ms of every save on an 845-line
+  # file (34.9 -> 38.7 ms) to answer "no" - the same shape as the pre-check in
+  # front of the delimiter scanner. With it, the guard is within noise.
+  if search(FOREIGN_FENCE, 'cnw') == 0
+    return 0
+  endif
+
+  var lines = getline(1, '$')
+
+  var payload: list<bool> = repeat([false], len(lines))
+  for range_pair in FindAllDocstringRanges(lines)
+    for lnum in range(range_pair[0] + 1, range_pair[1] - 1)
+      payload[lnum - 1] = true
+    endfor
+  endfor
+
+  for i in range(len(lines))
+    if !payload[i] && lines[i] =~# FOREIGN_FENCE
+      return i + 1
+    endif
+  endfor
+
+  return 0
+enddef
+
+# Only what the linter would actually report: a user who turned the tabs rule
+# off is telling the plugin that tabs are fine in this project, and having the
+# formatter convert them anyway would be the plugin arguing with its own
+# configuration.
+def FixupPass(): number
+  var changed = 0
+  if RuleOn('tabs')
+    changed += ExpandTabs()
+  endif
+  if RuleOn('trailing_space')
+    changed += StripTrailingWhitespace()
+  endif
+  return changed
 enddef
 
 export def AutoFormatOnSave()
-  # Apply any debounced edit before anything reads the cached error state, so
-  # the buffer being written is judged as it is right now. Done first and
-  # unconditionally: after a save the gutter should be current even when
-  # auto-formatting itself is turned off.
-  FlushPendingUpdate()
-
-  # If JSON was just formatted, skip this pass so it is not undone.
+  # Any debounced edit is applied before anything reads the cached error
+  # state, so the buffer is judged as it is right now. That happens on every
+  # path out of here, including the ones that do not format: after a save the
+  # gutter should be current even when auto-formatting is off.
   if get(b:, 'karate_just_formatted_json', 0) != 0
+    # JSON was just formatted by hand; skip one pass so it is not undone.
     b:karate_just_formatted_json = 0
+    FlushPendingUpdate()
     return
   endif
 
-  if get(g:, 'karate_linter_auto_format_on_save', 1) == 0
+  if get(g:, 'karate_linter_auto_format_on_save', 1) == 0 || !&modifiable
+    FlushPendingUpdate()
     return
   endif
+
+  # Before the fixup pass, not after it: with the docstring boundaries unknown
+  # even stripping trailing whitespace can eat part of a payload.
+  if ForeignFence() > 0
+    FlushPendingUpdate()
+    return
+  endif
+
+  FixupPass()
+
+  # Lint after the fixes, not before. They remove errors, and this is the
+  # gate that decides whether the file gets reindented at all.
+  FlushPendingUpdate()
   if get(b:, 'karate_has_errors', 0) != 0
     return
   endif
 
-  SmartAutoFormat()
+  if ApplyIndent() > 0
+    # Columns moved, so every anchored diagnostic did too.
+    UpdateDiagnostics()
+  endif
+enddef
+
+export def FormatBuffer()
+  if !&modifiable
+    echohl WarningMsg
+    echo '[Karate] Buffer is not modifiable.'
+    echohl NONE
+    return
+  endif
+
+  var fence = ForeignFence()
+  if fence > 0
+    echohl WarningMsg
+    echo printf('[Karate] Line %d: this plugin only understands a bare """ fence; not formatting.', fence)
+    echohl NONE
+    return
+  endif
+
+  var fixed = FixupPass()
+  FlushPendingUpdate()
+
+  if get(b:, 'karate_has_errors', 0) != 0
+    # Deliberate, and the same gate the save path uses. With an unclosed
+    # docstring the block boundaries are wrong, and indenting a payload line
+    # as though it were a step would rewrite the string Karate sends.
+    echohl WarningMsg
+    echo printf('[Karate] %d line(s) fixed; not reindenting while the file has errors.', fixed)
+    echohl NONE
+    return
+  endif
+
+  var moved = ApplyIndent()
+  if moved > 0
+    UpdateDiagnostics()
+  endif
+  echomsg printf('[Karate] Formatted: %d line(s) reindented, %d fixed.', moved, fixed)
 enddef
 
 export def FormatJsonInDocstring()
@@ -1595,18 +1864,12 @@ export def FormatJsonInDocstring()
 enddef
 
 export def ReplaceTabsWithSpaces()
-  var view = winsaveview()
-  var num_spaces = &shiftwidth > 0 ? &shiftwidth : 4
-
-  # The leading colon is required: Vim9 rejects a range without one, and this
-  # command used to be wrapped in `silent!`, which swallowed the E1050 and
-  # left it reporting success while replacing nothing.
-  #
-  # :keeppatterns so the substitution does not clobber the search register and
-  # the search history; the 'e' flag so a file with no tabs is not an error;
-  # plain :silent so the report line is suppressed but real errors are not.
-  silent keeppatterns execute ':%s/\t/' .. repeat(' ', num_spaces) .. '/ge'
-
-  winrestview(view)
-  echomsg '[Karate] Replaced tabs with spaces.'
+  # The same ExpandTabs() the save path uses, so there is one implementation
+  # of what "replace tabs" means. It was `:%s` wrapped in `silent!`, which
+  # swallowed the E1050 from the missing colon before the range and left the
+  # command reporting success while replacing nothing at all. setline() on
+  # the lines that actually contain a tab needs no range, does not touch the
+  # search register or the search history, and leaves the cursor where it is.
+  var changed = ExpandTabs()
+  echomsg printf('[Karate] Replaced tabs with spaces on %d line(s).', changed)
 enddef

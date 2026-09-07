@@ -32,6 +32,19 @@ line, not as a crash.
 
 The suite must be green before any commit.
 
+## The user's own `.feature` files are off limits
+
+Real files the user shares to reproduce a bug are **not** test material. They
+must not be committed, must not be split up into fixtures, and must not be
+used as a regression input — they carry internal hostnames, customer names and
+directory layouts. Put them in `tests/local/` (gitignored, and outside the
+`tests/fixtures/*.feature` glob the baseline is built from) and never stage
+them.
+
+Reproduce the bug in a fixture written from scratch instead: take the
+*structural* shape that triggered it — "several docstrings in a row", "a table
+after a comment" — and rebuild it with invented content.
+
 ## Invariants that are easy to break
 
 1. **Columns are byte offsets.** `prop_add()` wants bytes. In Vim9 script
@@ -52,26 +65,44 @@ The suite must be green before any commit.
    unused-variable or unused-header rules invents false positives. Only
    *definitions* are skipped.
 
-4. **Never echo from `UpdateDiagnostics()`.** It runs from the buffer-load and
+4. **The formatter must not change a docstring's payload.** Gherkin strips the
+   indentation of the opening `"""` from every body line, so the body has to
+   move by exactly the amount the delimiter moved — or the string Karate sends
+   changes. `ApplyIndent()` shifts the body textually, one space at a time, so
+   it never rewrites a tab and never touches a blank line. `check_format.vim`
+   asserts the dedented payload directly; that assertion, and nothing else,
+   is what pins this down.
+
+   The corollary: **`DOCSTRING_PATTERN` is the whole engine's idea of where a
+   docstring is, and it only matches a bare `"""` alone on its line.** Gherkin
+   also allows `"""json` and `'''`, and for those the engine's block
+   boundaries are simply wrong — `'''` linted clean and the indent pass then
+   moved the delimiter without its body. `ForeignFence()` therefore switches
+   the *entire* formatter off for such a file, fixup pass included: with the
+   boundaries unknown, stripping a trailing space is as damaging as
+   reindenting. Widening `DOCSTRING_PATTERN` instead would move every
+   docstring rule at once, so it needs its own change and its own baseline.
+
+5. **Never echo from `UpdateDiagnostics()`.** It runs from the buffer-load and
    buffer-write autocommands, where the cursor is not placed yet and Vim is
    about to print its own message; a second one forces a `Press ENTER` prompt.
    `OnLintTimer()` is the only safe place to refresh the message.
 
-5. **`=~` still honours `'ignorecase'` in Vim9.** Comparison operators do not,
+6. **`=~` still honours `'ignorecase'` in Vim9.** Comparison operators do not,
    but pattern matching does. Any pattern matching a Gherkin keyword needs
    `\C`. Legacy patterns without it were left as they were — do not assume a
    rule is case-sensitive, check.
 
-6. **Close `echohl`.** Every `echohl X` needs a matching `echohl NONE`, or the
+7. **Close `echohl`.** Every `echohl X` needs a matching `echohl NONE`, or the
    highlight leaks into every later message in the session.
 
-7. **Dictionary keys are strings in Vim9.** The docstring map and the per-line
+8. **Dictionary keys are strings in Vim9.** The docstring map and the per-line
    diagnostic index key on `string(lnum)` explicitly. Two consequences bit at
    once in the formatting code: `sort(keys(d), 'n')` does **not** sort — the
    `'n'` flag is a no-op on a list of strings, and it returns the dictionary's
    own order looking like it worked. Iterate a list in file order instead.
 
-8. **A range inside `:execute` needs a leading colon.** Vim9 rejects
+9. **A range inside `:execute` needs a leading colon.** Vim9 rejects
    `execute '5,9delete _'` with `E1050`; it has to be `execute ':5,9…'`, `%s`
    included. Prefer `deletebufline()` and friends, which take no range at all.
    `silent!` in front of such a command hides the error and leaves the command

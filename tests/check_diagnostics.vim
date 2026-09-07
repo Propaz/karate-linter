@@ -106,14 +106,27 @@ call s:Ok('save refreshed the error cache', get(b:, 'karate_has_errors', -1), 1)
 call add(s:out, '--- auto-format gating')
 let g:karate_linter_auto_format_on_save = 1
 call s:Fixture('12_clean.feature')
-call append(line('$'), "\tGiven a tab makes this an error")
+" An error the formatter cannot fix, and at column 0 so that a gate which
+" stopped working would be visible: the indent pass would move this line to
+" the step level. With a line already correctly indented the check would pass
+" whether the gate held or not.
+call append(line('$'), '* def broken = read(')
 doautocmd TextChanged
 " The error only exists in a pending, debounced lint at this point.
-" BufWritePre must flush, see it, and refuse to reformat.
+" BufWritePre must flush, see it, and refuse to reindent.
 let s:before = getline(1, '$')
 doautocmd BufWritePre
 call s:Ok('buffer untouched when errors pending', getline(1, '$') ==# s:before, v:true)
 call s:Ok('cache reflects the pending edit', get(b:, 'karate_has_errors', -1), 1)
+
+" A *fixable* pending error is the other half of that gate: the fixup pass
+" runs before it, which is what lets a save get as far as reindenting at all.
+call s:Fixture('12_clean.feature')
+call append(line('$'), "\tGiven a tab is fixed, not refused")
+doautocmd TextChanged
+doautocmd BufWritePre
+call s:Ok('pending tab was fixed on save', search('\t', 'nw'), 0)
+call s:Ok('and the file ends up clean', get(b:, 'karate_has_errors', -1), 0)
 
 " --- 7. Columns are byte offsets, also on non-ASCII lines ---
 " prop_add() wants byte columns. In Vim9 script str[i] indexes by CHARACTER,

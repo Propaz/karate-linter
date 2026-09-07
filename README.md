@@ -15,9 +15,29 @@ This plugin provides real-time linting for common errors and style issues in Kar
     while you type, so a burst of keystrokes costs one pass rather than one per
     key, and the engine is loaded lazily - nothing is read or compiled until
     you open your first `.feature` file.
--   **Smart Auto-formatting:** Optionally formats the file on save (`gg=G`), intelligently preserving the content of docstring blocks (`"""..."""`) to avoid corrupting embedded JSON or other data.
+-   **Gherkin-aware Formatting:** Indents the file on save from the Gherkin
+    structure itself — not through `=`, which knows nothing about `.feature`
+    files. Docstring blocks (`"""..."""`) move as a unit, so embedded JSON,
+    JavaScript and expected payloads come out byte for byte identical. See
+    [Formatting](#formatting).
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
+
+## Upgrading to 2.2
+
+-   **Auto-format on save no longer uses `gg=G`.** It computes Gherkin
+    indentation itself, so the result is the same with or without a gherkin
+    indent plugin installed. If you were relying on `=` and your own
+    `indentexpr`, set `g:karate_linter_auto_format_on_save = 0` and keep
+    formatting with `=` by hand.
+-   **Saving now fixes tabs and trailing whitespace** instead of refusing to
+    format because of them. Both are Error-level rules, and any error stopped
+    the formatter, so these were the two things it could have fixed and never
+    did. Turning the respective rule off also turns its fix off.
+-   **Indentation is always spaces**, `g:karate_linter_indent_width` of them
+    per level (default 4). `'expandtab'`, `'shiftwidth'` and `'tabstop'` do not
+    affect it — the previous behaviour indented with tabs under `'noexpandtab'`
+    and then reported every line it had touched as an error.
 
 ## Upgrading from 1.x
 
@@ -89,6 +109,13 @@ The plugin provides several commands that you can run manually:
     rebuilds the list; if nothing is left to report it closes the window rather
     than leaving entries that no longer match the file.
 
+-   `:KarateFormat`
+    -   Formats the buffer now: expands tabs, strips trailing whitespace and
+        reindents from the Gherkin structure. Same work the save does, on
+        demand — useful when auto-format on save is off, or on a file you have
+        just pasted in. It refuses to reindent a file that still has errors and
+        says so; see [Formatting](#formatting).
+
 -   `:KarateFmtJson`
     -   Formats the JSON content within a docstring (`"""..."""`) block. The cursor must be inside the block you wish to format. It uses `jq` or `python -m json.tool` if available.
 
@@ -100,8 +127,12 @@ The plugin provides several commands that you can run manually:
 You can customize the linter by adding `let g:variable_name = value` to your `vimrc` or `init.vim`.
 
 ### General
--   `g:karate_linter_auto_format_on_save`: Enable auto-formatting on save. This will not run if any errors are detected.
+-   `g:karate_linter_auto_format_on_save`: Format the file on save. Tabs and
+    trailing whitespace are fixed first; reindenting is skipped if any errors
+    remain after that. See [Formatting](#formatting).
     -   Default: `1` (enabled)
+-   `g:karate_linter_indent_width`: Spaces per indent level.
+    -   Default: `4`
 
 ### Rules and Levels
 For each rule, you can enable/disable it (`_rule`) and set its severity level (`_level`).
@@ -307,6 +338,67 @@ whitespace on them is still flagged.
     -   Defaults: `1`, `'KarateLintWarn'`
 
 ---
+
+## Formatting
+
+Both `:KarateFormat` and the save-time formatter do the same three things, in
+this order.
+
+**1. Fix what can be fixed.** Tabs become spaces and trailing whitespace is
+removed. Only for rules that are switched on: turning `tabs_rule` off tells the
+plugin that tabs are acceptable in this project, so it stops converting them.
+Trailing whitespace *inside* a docstring is left alone — the rule does not
+report it there, because it is part of the string being sent.
+
+**2. Lint, and stop here if errors remain.** Reindenting a file whose structure
+the linter cannot make sense of is how payloads get corrupted: with an unclosed
+`"""` the block boundaries are wrong, and a payload line would be indented as
+though it were a step. `:KarateFormat` tells you it refused; a save is silent,
+and the gutter shows why.
+
+The same caution applies to a docstring fence this plugin does not recognize.
+It understands a bare `"""` alone on its line, which is the form Karate's own
+documentation uses. Gherkin also allows a content type after the fence
+(`"""json`) and `'''` as an alternative; if either appears, the plugin does not
+know where the docstrings are and so does **nothing at all** to the file —
+step 1 included, since even stripping a trailing space could take a byte out of
+a payload. `:KarateFormat` names the line.
+
+**3. Reindent.** From the structure, in units of
+`g:karate_linter_indent_width` (default 4):
+
+| Level | Lines |
+|---|---|
+| 0 | `Feature:` |
+| 1 | `Background:`, `Scenario:`, `Scenario Outline:`, and the free-text description under `Feature:` |
+| 2 | steps (`Given`, `When`, `Then`, `And`, `*`), `Examples:`, the `"""` delimiters |
+| 3 | table rows (`\| a \| b \|`) |
+
+A tag or a comment takes the level of whatever follows it, so `@smoke` lines up
+with its `Scenario:` and a comment lines up with the step it explains. When
+there is nothing after it — a note under the last step, a block of
+commented-out scenarios at the end of the file — it keeps the level of what it
+follows instead. Blank lines are emptied of whitespace. Anything else is
+treated as free text at the level of its surroundings.
+
+Indentation is always spaces. `'expandtab'`, `'shiftwidth'` and `'tabstop'` are
+not consulted — the width above is in spaces by definition.
+
+**Docstring bodies are payload.** Gherkin strips the indentation of the opening
+`"""` from every line of the body, so the body is shifted by exactly the amount
+its delimiter moved and its internal shape is preserved. The string Karate
+receives is unchanged, byte for byte. Nothing else inside a block is touched:
+not a line that looks like a step, not a line that looks like a table row.
+
+A file that is already formatted is not rewritten — not one line, and the
+buffer is not marked modified. Formatting twice changes nothing the second
+time.
+
+What the formatter does **not** do: it never reflows or wraps, so a step over
+`g:karate_linter_max_line_length` stays too long (and a line pushed over the
+limit by its new indentation will start being reported). It never reorders
+anything, and it never changes a line's contents beyond its leading whitespace
+and any tab in it.
 
 ## Customizing Highlights and Signs
 
