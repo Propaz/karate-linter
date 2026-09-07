@@ -119,6 +119,14 @@ The plugin provides several commands that you can run manually:
 -   `:KarateFmtJson`
     -   Formats the JSON content within a docstring (`"""..."""`) block. The cursor must be inside the block you wish to format. It uses `jq` or `python -m json.tool` if available.
 
+-   `:KarateAlignDocstring`
+    -   Re-anchors the docstring block under the cursor so its least-indented
+        line lines up with the opening `"""`. Use it on a body that hangs to
+        the *left* of its own delimiter, where Karate is receiving something
+        other than what you see; see
+        [Docstring bodies that hang left](#docstring-bodies-that-hang-left).
+        Like `:KarateFmtJson` it edits the payload, so it is never run for you.
+
 -   `:KarateTabsToSpaces`
     -   Replaces all tab characters in the file with spaces, according to your `shiftwidth` setting.
 
@@ -393,6 +401,40 @@ not a line that looks like a step, not a line that looks like a table row.
 A file that is already formatted is not rewritten — not one line, and the
 buffer is not marked modified. Formatting twice changes nothing the second
 time.
+
+### Docstring bodies that hang left
+
+Gherkin dedents each body line by the column of the opening `"""` — but it can
+only remove whitespace that is there. A body indented *less* than its own
+delimiter is therefore clamped, and the structure you see is not the structure
+Karate gets:
+
+```
+        """
+    for (var i = 0; i < 3; i++) {     ← 4 spaces, delimiter is at 8
+      if (i > 1) {
+        total = total + i;
+      }
+    }
+        """
+```
+
+Every one of those lines arrives at column 0, flat. It runs fine — the nesting
+was only ever cosmetic — but if you were counting on the indentation reaching
+Karate, it never did.
+
+`:KarateAlignDocstring`, with the cursor in the block, shifts the whole body
+right until its least-indented line meets the delimiter. The internal shape is
+preserved exactly, and the payload then carries the nesting you can see.
+
+This is deliberately **not** part of formatting. Realigning changes the string
+Karate receives, and the formatter's guarantee is that it does not — so the
+command is explicit and per-block, on the same terms as `:KarateFmtJson`. For
+the same reason it only ever shifts a block *right*: indentation beyond the
+delimiter's column is preserved by Gherkin, which makes it real payload, and
+pulling an over-indented block left would quietly rewrite a YAML or
+plain-text docstring. A body indented with tabs is refused rather than guessed
+at — run `:KarateTabsToSpaces` first.
 
 What the formatter does **not** do: it never reflows or wraps, so a step over
 `g:karate_linter_max_line_length` stays too long (and a line pushed over the

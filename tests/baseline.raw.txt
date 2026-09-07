@@ -140,3 +140,5 @@
     (no issues)
 === 32_indent_rebuild.feature
     (no issues)
+=== 33_docstring_hanging_left.feature
+    (no issues)
