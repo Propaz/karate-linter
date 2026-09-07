@@ -498,6 +498,30 @@ so this runs the built-in jump rather than looping back into your mapping.
 `:lnext` and `:lprevious` are unaffected either way, and need no mapping to
 walk the list.
 
+### `E121: Undefined variable: linter` on every keystroke
+
+Fixed in 2.3.1. If you are seeing it, restart Vim once and update the plugin.
+
+It appeared after reloading your config (`:source $MYVIMRC`) or letting a
+plugin manager update the plugin in a running Vim, and then followed every
+cursor movement:
+
+```
+Error detected while processing autocommands for CursorMoved:
+E121: Undefined variable: linter
+```
+
+Sourcing a Vim9 script a second time clears the script's own variables and
+imports before running it, and the plugin's load guard then returned early —
+before it could re-create them. The autocommands and commands from the first
+load survived, still pointing at that emptied script, so all of them failed
+until Vim was restarted. The plugin is now declared `vim9script noclear`,
+which keeps that state across a re-source; `tests/check_reload.vim` sources
+the plugin repeatedly and then fires every autocommand and command.
+
+Nothing was ever wrong with your files, and no editing was lost — the linter
+and the formatter were simply not running while the message was appearing.
+
 ---
 
 ## Contributing

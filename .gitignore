@@ -7,6 +7,7 @@ tests/diagnostics.txt
 tests/echo.txt
 tests/loclist.txt
 tests/format.txt
+tests/reload.txt
 
 # scratch space for real .feature files used while chasing a bug: outside the
 # tests/fixtures glob, so they do not become part of the recorded baseline

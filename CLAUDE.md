@@ -122,6 +122,24 @@ after a comment" — and rebuild it with invented content.
    silently doing nothing — that shipped in 2.0.0 and made
    `:KarateTabsToSpaces` a no-op that still reported success.
 
+10. **`plugin/karate_linter.vim` must stay `vim9script noclear`.** A guarded
+    Vim9 script needs it. Re-sourcing one — `:source $MYVIMRC`, a plugin
+    manager's update hook — clears its script-local items *before* executing,
+    and the `exists('g:loaded_karate_linter')` guard then `finish`es before
+    the `import autoload` can be re-created. The autocommands and commands
+    from the first load survive that and still resolve against the emptied
+    script, so every one of them dies with `E121: Undefined variable: linter`
+    until Vim is restarted — on `CursorMoved`, which is to say on every
+    keystroke. `KarateLinterReport()` kept working and hid how broad it was:
+    it is a compiled `def g:` whose reference resolved at compile time.
+    `tests/check_reload.vim` covers it, and 12 of its assertions fail if the
+    `noclear` is dropped.
+
+    The highlight links next to it need no such care: `highlight default link`
+    is restored by the `:highlight clear` inside `:colorscheme`, so they
+    survive a colorscheme change and the plugin wants no `ColorScheme`
+    autocommand. That was worth probing — the expectation was the opposite.
+
 ## Conventions
 
 - **Measure before optimising, and measure again after.** This repository's
