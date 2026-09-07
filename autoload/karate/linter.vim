@@ -1446,38 +1446,45 @@ def SmartAutoFormat()
   var save_cursor = getcurpos()
 
   # 1. Store the original content of every docstring block.
-  var original_blocks: dict<list<string>> = {}
+  #
+  # A list in file order, not a dictionary keyed by line number: the keys were
+  # strings, and sort(keys(), 'n') does not sort a list of strings at all. It
+  # returned them in the dictionary's own order and looked like it had worked.
+  var blocks: list<dict<any>> = []
   for range_pair in FindAllDocstringRanges(getline(1, '$'))
     var start_lnum = range_pair[0]
     var end_lnum = range_pair[1]
-    if end_lnum - start_lnum > 1
-      original_blocks[string(start_lnum)] = getline(start_lnum + 1, end_lnum - 1)
-    else
-      original_blocks[string(start_lnum)] = []
-    endif
+    add(blocks, {
+      start: start_lnum,
+      body: end_lnum - start_lnum > 1 ? getline(start_lnum + 1, end_lnum - 1) : [],
+    })
   endfor
 
   # 2. Format the whole file.
   silent! normal! gg=G
 
-  # 3. Put the original docstring content back, at the new indentation.
-  if !empty(original_blocks)
-    for key in sort(keys(original_blocks), 'n')
-      var start_lnum = str2nr(key)
-      var inner_save = getcurpos()
-      cursor(start_lnum + 1, 1)
-      var end_lnum = search('^\s*"""\s*$', 'W')
-      setpos('.', inner_save)
+  # 3. Put the original docstring content back. Each block is replaced by
+  # exactly as many lines as are removed, so the positions collected in step 1
+  # stay valid as the loop walks down the file.
+  for block in blocks
+    var start_lnum: number = block.start
+    var inner_save = getcurpos()
+    cursor(start_lnum + 1, 1)
+    var end_lnum = search(DOCSTRING_PATTERN, 'W')
+    setpos('.', inner_save)
 
-      if end_lnum == 0
-        continue
-      endif
-      if end_lnum - start_lnum > 1
-        execute (start_lnum + 1) .. ',' .. (end_lnum - 1) .. 'delete _'
-      endif
-      append(start_lnum, original_blocks[key])
-    endfor
-  endif
+    if end_lnum == 0
+      continue
+    endif
+    if end_lnum - start_lnum > 1
+      # deletebufline() instead of :execute with a range. Vim9 requires a
+      # colon before a range even inside an :execute string, and without it
+      # this threw E1050 out of BufWritePre - which aborted the loop and left
+      # every docstring in the file with gg=G's indentation.
+      deletebufline('%', start_lnum + 1, end_lnum - 1)
+    endif
+    append(start_lnum, block.body)
+  endfor
 
   setpos('.', save_cursor)
 enddef
@@ -1577,7 +1584,9 @@ export def FormatJsonInDocstring()
     return
   endif
 
-  execute (start_line + 1) .. ',' .. (end_line - 1) .. 'delete _'
+  # Not :execute with a range - Vim9 needs a colon before one, and without it
+  # this threw E1050 and left the block untouched.
+  deletebufline('%', start_line + 1, end_line - 1)
   append(start_line, mapnew(formatted, (_, val) => indent_str .. val))
 
   # Skip the next auto-format-on-save so it does not undo this.
@@ -1589,9 +1598,14 @@ export def ReplaceTabsWithSpaces()
   var view = winsaveview()
   var num_spaces = &shiftwidth > 0 ? &shiftwidth : 4
 
-  # :keeppatterns so the substitution does not clobber the search register
-  # and the search history.
-  silent! keeppatterns execute '%s/\t/' .. repeat(' ', num_spaces) .. '/g'
+  # The leading colon is required: Vim9 rejects a range without one, and this
+  # command used to be wrapped in `silent!`, which swallowed the E1050 and
+  # left it reporting success while replacing nothing.
+  #
+  # :keeppatterns so the substitution does not clobber the search register and
+  # the search history; the 'e' flag so a file with no tabs is not an error;
+  # plain :silent so the report line is suppressed but real errors are not.
+  silent keeppatterns execute ':%s/\t/' .. repeat(' ', num_spaces) .. '/ge'
 
   winrestview(view)
   echomsg '[Karate] Replaced tabs with spaces.'

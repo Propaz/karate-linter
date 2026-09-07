@@ -66,7 +66,17 @@ The suite must be green before any commit.
    highlight leaks into every later message in the session.
 
 7. **Dictionary keys are strings in Vim9.** The docstring map and the per-line
-   diagnostic index key on `string(lnum)` explicitly.
+   diagnostic index key on `string(lnum)` explicitly. Two consequences bit at
+   once in the formatting code: `sort(keys(d), 'n')` does **not** sort — the
+   `'n'` flag is a no-op on a list of strings, and it returns the dictionary's
+   own order looking like it worked. Iterate a list in file order instead.
+
+8. **A range inside `:execute` needs a leading colon.** Vim9 rejects
+   `execute '5,9delete _'` with `E1050`; it has to be `execute ':5,9…'`, `%s`
+   included. Prefer `deletebufline()` and friends, which take no range at all.
+   `silent!` in front of such a command hides the error and leaves the command
+   silently doing nothing — that shipped in 2.0.0 and made
+   `:KarateTabsToSpaces` a no-op that still reported success.
 
 ## Conventions
 

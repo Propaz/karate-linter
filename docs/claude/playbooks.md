@@ -121,6 +121,10 @@ The traps below all cost time at least once in this project.
   `execute('doautocmd CursorMoved')` returns it.
 - **Timers do fire under `-es`** during `sleep 400m`, so the debounce path is
   testable end to end.
+- **Auto-format on save refuses while the buffer has errors**, so a fixture
+  for it has to be clean. That gate is why the whole docstring-restore path
+  went untested through 2.0.0: the only tests that reached `BufWritePre` used
+  dirty fixtures and so only ever exercised the refusal.
 - **Reaching script-local functions from a test is not needed.** Drive
   everything through the real autocommands (`doautocmd BufWinEnter`,
   `TextChanged`, `BufWritePre`) — it tests the event wiring at the same time,
@@ -142,6 +146,14 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | `matchstrlist()` returns one match per line | It returns all of them, with `idx` and `byteidx`. |
 | `prop_add_list()` end column | Exclusive, equal to `col + length` — verified against `prop_add()` before relying on it. |
 | A quickfix item's `filename` always jumps | It is resolved against the current directory, so for an unnamed buffer the entry is still `valid: 1` but jumping does nothing at all. Use `bufnr`. |
+| `execute 'N,Mdelete _'` runs | `E1050: Colon required before a range` in Vim9. Same for `%s`. `deletebufline()` sidesteps it. |
+| `sort(list, 'n')` sorts numeric strings | Only sorts real numbers. On `['114', '24']` it is a no-op and returns the input order. |
+
+**A probe whose input already looks like the expected answer proves nothing.**
+`sort(['24', '42', '114'], 'n')` came back in the same order and was read as
+success; the list had been sorted to begin with. The same mistake produced a
+green location-list test that jumped to the line the cursor was already on.
+Give a probe an input that can only survive if the code works.
 
 The pattern for a probe: write a small script that prints results with
 `writefile()`, run it with `vim -Nu NONE -es -S`, read the file.

@@ -50,6 +50,12 @@ sed 's/^/  /' tests/echo.txt
 grep -q 'RESULT: ALL OK' tests/echo.txt || status=1
 
 echo
+echo "== formatting =="
+"$VIM" -Nu NONE -es -S tests/check_format.vim
+sed 's/^/  /' tests/format.txt
+grep -q 'RESULT: ALL OK' tests/format.txt || status=1
+
+echo
 echo "== location list =="
 "$VIM" -Nu NONE -es -S tests/check_loclist.vim
 sed 's/^/  /' tests/loclist.txt
