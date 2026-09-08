@@ -3,10 +3,11 @@
 " The other check_*.vim scripts assert what the linter reports. This one
 " asserts the things an audit finds and a suite normally cannot: an option
 " nobody documented, a rule whose off-switch is never executed, a function
-" renamed out from under a document, a fixture the baseline has never seen.
-" Every one of these has actually rotted here at least once.
+" renamed out from under a document, a citation that names a section which no
+" longer exists, a fixture the baseline has never seen. Every one of these has
+" actually rotted here at least once.
 "
-" All four checks are textual on purpose - they read the sources as text
+" All five checks are textual on purpose - they read the sources as text
 " rather than importing them, because what they are testing is whether two
 " files still agree, and a checker that resolves symbols would hide exactly
 " the drift it is looking for.
@@ -232,7 +233,83 @@ call s:Ok('every function the docs name exists', s:missing_funcs, [])
 call s:Ok('every path the docs name exists', s:missing_paths, [])
 call s:Ok('every file:line citation is in range', s:bad_citations, [])
 
-" --- 4. Fixtures, the baseline and the check scripts agree ---
+" --- 4. Cross-references resolve, and none of them is a number ---
+" The invariants used to be numbered, and a renumbering left a reference
+" pointing at the wrong rule. They are `### ` headings now, cited in italics
+" by name, and both halves of that are checked: a citation by number at all,
+" and an italic citation that matches no heading in either agent document -
+" which is what a renamed heading leaves behind, and what a half-written
+" citation looks like: `Auditing a claim` for a section whose name goes on
+" `, or a document, against the code`.
+call add(s:out, '--- cross-references')
+
+let s:headings = []
+for s:doc in s:docs
+    for s:line in s:Read(s:doc)
+        let s:head = matchstr(s:line, '^#\{2,3} \zs.\{-}\ze\s*$')
+        if !empty(s:head)
+            call add(s:headings, s:head)
+        endif
+    endfor
+endfor
+call s:Ok('the agent docs have headings to cite', len(s:headings) > 20, v:true)
+
+" Everywhere a citation can appear: both agent docs, the README, the sources,
+" and the check scripts, which cite them in comments.
+let s:citers = s:docs + ['README.md', 'autoload/karate/linter.vim',
+    \ 'plugin/karate_linter.vim']
+for s:f in glob(s:root . '/tests/*.vim', 0, 1)
+    call add(s:citers, 'tests/' . fnamemodify(s:f, ':t'))
+endfor
+
+" An italic span that looks like the name of a section: capitalised, more than
+" one word, no trailing punctuation, and no backslash - the last of those
+" keeps Vim patterns such as `\*Scenario\%( Outline\)\?:` out of it. Bold
+" spans are removed first, so `**emphasis**` is not read as a citation.
+function! s:Citations(rel) abort
+    let l:out = []
+    for l:raw in s:Read(a:rel)
+        " Bold markers are dropped rather than matched as pairs, so that a
+        " nested emphasis - `**bold *italic* bold**` - does not leave a stray
+        " asterisk that swallows half the sentence as a citation.
+        let l:line = substitute(l:raw, '\*\*', '', 'g')
+        let l:start = 0
+        while l:start >= 0
+            let l:m = matchstrpos(l:line, '\*[^*]\{4,60}\*', l:start)
+            if l:m[1] < 0
+                break
+            endif
+            let l:span = l:m[0][1 : -2]
+            if l:span =~# '^[A-Z]' && l:span =~# ' ' && l:span !~# '\\'
+                \ && l:span !~# '[.,;:]$'
+                call add(l:out, l:span)
+            endif
+            let l:start = l:m[2]
+        endwhile
+    endfor
+    return l:out
+endfunction
+
+let s:numbered = []
+let s:dangling = []
+for s:f in s:citers
+    let s:lnum = 0
+    for s:line in s:Read(s:f)
+        let s:lnum += 1
+        if s:line =~# 'invariant\s\+\d'
+            call add(s:numbered, s:f . ':' . s:lnum)
+        endif
+    endfor
+    for s:span in s:Citations(s:f)
+        if index(s:headings, s:span) == -1 && index(s:dangling, s:span) == -1
+            call add(s:dangling, s:span)
+        endif
+    endfor
+endfor
+call s:Ok('no invariant is cited by number', s:numbered, [])
+call s:Ok('every italic citation names a real section', s:dangling, [])
+
+" --- 5. Fixtures, the baseline and the check scripts agree ---
 " The baseline is built from a glob, so a fixture that was added without
 " re-recording it is invisible; and a fixture pinned by name in a check script
 " but deleted takes that assertion down with it.

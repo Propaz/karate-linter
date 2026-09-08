@@ -199,7 +199,8 @@ call s:Ok('no test-only SID hook left behind', exists('*KarateLinterSid'), 0)
 " --- 11. A placeholder inside a docstring body is still a usage ---
 " Gherkin substitutes <placeholder> into a docstring payload before Karate
 " ever sees it, so the usage scan in LintScenarioOutlines() deliberately does
-" not skip docstring_body - only *definitions* are skipped (invariant 3).
+" not skip docstring_body - only *definitions* are skipped
+" (*Docstring bodies are payload*).
 " Narrowing that loop to the statement lines leaves every other assertion in
 " the suite green: in this fixture both Examples columns are used only inside
 " the payload, and skipping it invents two "unused header" warnings.
