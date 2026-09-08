@@ -181,15 +181,26 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 ## Releasing
 
 1. `tests/run.sh` green, working tree clean.
-2. Smoke-test a fresh install: a vimrc with nothing but
-   `set runtimepath^=<repo>`, open a `.feature`, check the commands exist and
-   that diagnostics, signs and the cursor message all appear. Then re-source
-   the vimrc in that same Vim and use the plugin again — an *installed*
-   plugin is sourced by a manager that may source it twice, and that path
-   broke for three releases without any of the fresh-install checks noticing.
-   Beware wrong expectations in the probe itself: `&filetype` on a `.feature`
-   file is `cucumber` (the plugin hooks the file pattern, not the filetype),
-   and the cursor message is prefixed `[karate]`, lowercase.
+2. The fresh-install smoke test is `tests/check_install.vim`, and `run.sh`
+   already ran it: a vimrc containing nothing but `set runtimepath^=<repo>`,
+   so Vim loads the plugin itself rather than an explicit `:source`, then the
+   commands, the diagnostics, the signs and the cursor message, then a second
+   source of the plugin file — what a manager's update hook does, and the path
+   that broke for three releases without any fresh-install check noticing.
+   Dropping `vim9script noclear` fails two of its assertions with `E121`.
+
+   What it cannot do is look at the screen. Once per release, open a real
+   `.feature` in an interactive Vim and check that the highlights, the gutter
+   and the message look right — every rendering bug in this project's history
+   was found that way and none of them by an assertion.
+   Beware wrong expectations in the probe itself. The cursor message is
+   prefixed `[karate]`, lowercase. And `&filetype` is a trap twice over: with
+   filetype detection on it is `cucumber`, not `karate` — but the smoke
+   probe's own vimrc contains nothing but the `runtimepath` line, so detection
+   is *off* there and `&filetype` is empty. Asserting `cucumber` fails against
+   a perfectly working plugin. What the probe should assert is that
+   diagnostics appear anyway: the plugin hooks the file *pattern*, so it works
+   with detection off, and that is worth pinning rather than the filetype.
 
    **Prove a regression test fails against the old code.** Build a scratch
    tree at the ref *before* the fix, drop the new test into it, and run it
@@ -228,7 +239,7 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 
 ## Debugging the test harness
 
-`tests/run.sh` is the report snapshot plus six scripts. It takes no filter
+`tests/run.sh` is the report snapshot plus seven scripts. It takes no filter
 flag, so to run one, run it directly — and to run the whole suite against
 another build, `VIM=` selects the binary, which is the only way to check the
 9.1.0009 floor:
@@ -236,6 +247,15 @@ another build, `VIM=` selects the binary, which is the only way to check the
 ```sh
 vim -Nu NONE -es -S tests/check_echo.vim </dev/null
 VIM=/opt/vim91/bin/vim tests/run.sh
+```
+
+`check_install.vim` is the exception to that first command: it needs the
+minimal vimrc `run.sh` writes for it, because being loaded by Vim itself is
+the thing it tests.
+
+```sh
+printf 'set runtimepath^=%s\n' "$PWD" > /tmp/klvimrc
+vim -Nu /tmp/klvimrc -es -S tests/check_install.vim </dev/null
 ```
 
 | Script | What it holds down |
@@ -246,6 +266,8 @@ VIM=/opt/vim91/bin/vim tests/run.sh
 | `check_format.vim` | the formatter: payload preservation, the refusal gate, idempotence |
 | `check_options.vim` | one option scenario per invocation — see *Adding a rule*, step 6 |
 | `check_reload.vim` | surviving a re-source; the `noclear` invariant |
+| `check_install.vim` | the fresh-install path: Vim's own plugin loading, then a second source |
+| `check_conventions.vim` | the project's rules about itself — see *Auditing a claim* |
 
 Each writes its verdict to a gitignored `tests/<name>.txt`, and the pass
 contract is the literal line `RESULT: ALL OK`, which `run.sh` greps for. So

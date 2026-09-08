@@ -134,6 +134,17 @@ opt_case "stray placeholder: rule off"            "0 -"     --cmd 'let g:karate_
 rm -f "$KL_RESULT"
 
 echo
+echo "== fresh install =="
+# A vimrc with nothing in it but the runtimepath line, so what is exercised is
+# Vim's own plugin loading rather than an explicit :source. Release step 2.
+kl_vimrc=$(mktemp -t karate_linter_vimrc)
+printf 'set runtimepath^=%s\n' "$PWD" > "$kl_vimrc"
+"$VIM" -Nu "$kl_vimrc" -es -S tests/check_install.vim
+rm -f "$kl_vimrc"
+sed 's/^/  /' tests/install.txt
+grep -q 'RESULT: ALL OK' tests/install.txt || status=1
+
+echo
 echo "== conventions =="
 "$VIM" -Nu NONE -es -S tests/check_conventions.vim
 sed 's/^/  /' tests/conventions.txt

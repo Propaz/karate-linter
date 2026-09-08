@@ -9,6 +9,7 @@ tests/loclist.txt
 tests/format.txt
 tests/reload.txt
 tests/conventions.txt
+tests/install.txt
 
 # scratch space for real .feature files used while chasing a bug: outside the
 # tests/fixtures glob, so they do not become part of the recorded baseline
