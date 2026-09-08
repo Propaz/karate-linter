@@ -32,6 +32,25 @@ Step-by-step procedures for the recurring kinds of work in this repository.
    one case asserting the finding count with the rule on, one with
    `--cmd 'let g:karate_linter_<name>_rule = 0'` asserting zero.
 
+   The cases run through `tests/check_options.vim`, one Vim per case because of
+   the plugin's load guard, driven by three environment variables: `KL_RESULT`
+   (the file the `"<count> <level>"` line is written to), `KL_FIXTURE`
+   (default `14_parens_bad.feature`) and `KL_MATCH` (default `Unclosed '('`),
+   the pattern that selects which diagnostics are counted. `opt_case` **unsets
+   `KL_FIXTURE` and `KL_MATCH` after every case**, so a pair that needs them
+   has to export them twice — which is what the repeated `export` lines in
+   that section are, not a copy-paste slip.
+
+   **Do not read that section as a measure of the suite's coverage.** The
+   convention was applied to the rules added after it and never backwards: 7
+   of the 22 `_rule` options have a toggle case, and the other 15 — the
+   `missing_*` family, `unused_variable`, `unclosed_docstring`,
+   `undefined_placeholder`, `unused_header` and the rest — have none, so for
+   those the `_rule = 0` path has never been executed at all. Nine of them
+   also rest on `12_clean.feature` alone for their negative half, which means
+   a false positive shows up only as a baseline line and never as a named
+   failure.
+
 7. Document it in `README.md`, including the boundary from step 1.
 
 ---
@@ -199,6 +218,32 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 ---
 
 ## Debugging the test harness
+
+`tests/run.sh` is the report snapshot plus six scripts. It takes no filter
+flag, so to run one, run it directly — and to run the whole suite against
+another build, `VIM=` selects the binary, which is the only way to check the
+9.1.0009 floor:
+
+```sh
+vim -Nu NONE -es -S tests/check_echo.vim </dev/null
+VIM=/opt/vim91/bin/vim tests/run.sh
+```
+
+| Script | What it holds down |
+|---|---|
+| `check_diagnostics.vim` | the report → text-props/signs pipeline, byte columns, sign identity |
+| `check_echo.vim` | the cursor-line message, its `(+N more)` suffix, the debounce timer |
+| `check_loclist.vim` | `:KarateLintCheck`, the location list, and that jumping works |
+| `check_format.vim` | the formatter: payload preservation, the refusal gate, idempotence |
+| `check_options.vim` | one option scenario per invocation — see *Adding a rule*, step 6 |
+| `check_reload.vim` | surviving a re-source; the `noclear` invariant |
+
+Each writes its verdict to a gitignored `tests/<name>.txt`, and the pass
+contract is the literal line `RESULT: ALL OK`, which `run.sh` greps for. So
+the suite reports failure *by absence*: a script that dies on startup writes
+nothing, and `run.sh` says only that the string was missing. Read the script's
+own output file to find out what actually broke — and see *Releasing* for how
+a leftover file from a previous run turns this into a false pass.
 
 The traps below all cost time at least once in this project.
 

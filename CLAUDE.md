@@ -150,6 +150,42 @@ after a comment" — and rebuild it with invented content.
     survive a colorscheme change and the plugin wants no `ColorScheme`
     autocommand. That was worth probing — the expectation was the opposite.
 
+11. **A diagnostic is one fixed record, and a malformed one is discarded in
+    silence.** The shape is `{lnum, col, end_col, text, level}`: `col` a
+    1-based *byte* offset, `end_col` exclusive and equal to `col + length`,
+    `level` one of the two highlight group names. Every rule, every test and
+    the baseline format depend on it, and the only place it is written down is
+    the comment above `KarateLinterReport()` in `plugin/`.
+
+    `UpdateDiagnostics()` skips any record with `col < 1` or
+    `end_col <= col` before rendering — on purpose, so that one bad column
+    cannot abort the render for a whole buffer the way the `E964` in invariant
+    2 did. But the record still comes back from `GenerateReport()`, so it
+    still reaches the report and the baseline: **the suite can be green while
+    nothing at all is highlighted.** A new rule wants a look at a real buffer,
+    not only a baseline line.
+
+12. **`RuleOn()` defaults to *off*.** It is `get(g:, '…_rule', 0)`, so a rule
+    whose options were never added to `DEFAULTS` is silently dead — no error at
+    any layer, no findings, and a baseline that looks like the rule simply had
+    nothing to say. `RuleLevel()` defaults to `Error` instead, which means a
+    half-registered rule can also come back at the wrong level. Registering
+    the options is step 4 of the playbook for exactly this reason.
+
+    `max_line_length` is the one deliberate exception to the
+    `_rule`/`_level` pair: it is a numeric option with a `_level` and no
+    `_rule`, and it is the only option read as a bare `g:` rather than through
+    `get()` — so the engine hard-depends on `plugin/` having run.
+
+13. **The `b:` state belongs to `UpdateDiagnostics()`, not to
+    `GenerateReport()`.** The report function is pure; the autocommand-driven
+    one is what sets `b:karate_has_errors` (the gate the formatter refuses on),
+    `b:karate_diagnostics` (the per-line index, keyed `string(lnum)`),
+    `b:karate_echoed` and `b:karate_just_formatted_json`. A test that calls
+    `KarateLinterReport()` and then reads any of them reads a stale value or
+    none at all; fire `doautocmd BufWinEnter` first. Every existing test does,
+    and none of them says why.
+
 ## Conventions
 
 - **Measure before optimising, and measure again after.** This repository's
