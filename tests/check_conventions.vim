@@ -62,32 +62,17 @@ endfunction
 
 let s:docs = ['CLAUDE.md', 'docs/claude/playbooks.md']
 
-" --- 1. Every rule's `_rule = 0` path is executed, or is declared as debt ---
+" --- 1. Every rule's `_rule = 0` path is executed ---
 " The `option handling` section of tests/run.sh is the only place a rule's off
 " switch runs. The convention (CLAUDE.md; playbooks, *Adding a rule* step 6)
-" arrived after most of the rules did and was never applied backwards, so the
-" rules that predate it are named here instead of papered over. The list is a
-" ratchet: a new rule may not join it, and a rule that gains a toggle case
-" must leave it.
+" arrived after most of the rules did and went unapplied to the fifteen that
+" predate it; this list held them as declared debt until they were paid off,
+" and it is now empty. Keep it that way: an entry here is a rule whose "off"
+" is only claimed, not tested. The list is still a ratchet in both directions,
+" so a rule that gains a case must also leave the list.
 call add(s:out, '--- rule toggle coverage')
 
-let s:untoggled_debt = [
-    \ 'and_but',
-    \ 'call_read_space',
-    \ 'missing_background',
-    \ 'missing_examples',
-    \ 'missing_feature',
-    \ 'missing_scenario',
-    \ 'no_space_after_keyword',
-    \ 'orphaned_examples',
-    \ 'tabs',
-    \ 'trailing_space',
-    \ 'unclosed_docstring',
-    \ 'undefined_placeholder',
-    \ 'undefined_request_var',
-    \ 'unused_header',
-    \ 'unused_variable',
-    \ ]
+let s:untoggled_debt = []
 
 " The rule names, taken from the DEFAULTS block itself.
 let s:in_defaults = 0
@@ -117,9 +102,25 @@ for s:line in s:Read('plugin/karate_linter.vim')
 endfor
 call s:Ok('DEFAULTS parsed at all', len(s:rules) > 10, v:true)
 
-let s:runsh = s:Text('tests/run.sh')
-let s:toggled = filter(copy(s:rules),
-    \ 's:runsh =~# ''karate_linter_'' . v:val . ''_rule = 0''')
+" Two shapes count, because the harness has two. A literal
+" `..._rule = 0` in a --cmd is one case written out; `rule_pair <name> ...` is
+" both halves at once, and there the rule name reaches the option through a
+" shell variable, so the literal is not in the file to find. Commented-out
+" lines do not count - the suite would not run them either.
+let s:runsh_lines = filter(s:Read('tests/run.sh'), 'v:val !~# ''^\s*#''')
+let s:runsh = join(s:runsh_lines, "\n")
+function! s:HasToggle(rule) abort
+    if s:runsh =~# 'karate_linter_' . a:rule . '_rule = 0'
+        return v:true
+    endif
+    for l:line in s:runsh_lines
+        if l:line =~# '^\s*rule_pair\s\+' . a:rule . '\s'
+            return v:true
+        endif
+    endfor
+    return v:false
+endfunction
+let s:toggled = filter(copy(s:rules), 's:HasToggle(v:val)')
 let s:untested = filter(copy(s:rules), 'index(s:toggled, v:val) == -1')
 
 call s:Ok('no new rule without an off-switch test',

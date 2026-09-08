@@ -45,15 +45,19 @@ Step-by-step procedures for the recurring kinds of work in this repository.
    has to export them twice — which is what the repeated `export` lines in
    that section are, not a copy-paste slip.
 
-   **Do not read that section as a measure of the suite's coverage.** The
-   convention was applied to the rules added after it and never backwards: 7
-   of the 22 `_rule` options have a toggle case, and the other 15 — the
-   `missing_*` family, `unused_variable`, `unclosed_docstring`,
-   `undefined_placeholder`, `unused_header` and the rest — have none, so for
-   those the `_rule = 0` path has never been executed at all. Nine of them
-   also rest on `12_clean.feature` alone for their negative half, which means
-   a false positive shows up only as a baseline line and never as a named
-   failure.
+   All 22 `_rule` options have a case as of 2.4, and
+   `check_conventions.vim` fails if a new rule arrives without one — the
+   fifteen that predated the convention were paid off in one pass, using
+   `rule_pair`, which writes both halves from a fixture and a match taken out
+   of the recorded baseline.
+
+   Coverage of the *off* switch is not coverage of the rule, though, and the
+   negative half is the one that pays. The structural rules used to have
+   `12_clean.feature` as their whole negative half; writing one real
+   near-miss fixture for them — `36_structural_near_misses.feature`, keywords
+   in comments and in a payload, XML in an outline, a tagged `Examples:` —
+   found a false-positive pair on the first run. That is the going rate for
+   this kind of fixture, so write one for anything structural.
 
 7. Document it in `README.md`, including the boundary from step 1.
 
@@ -358,6 +362,7 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | The engine recognises every Gherkin docstring fence | `DOCSTRING_PATTERN` is `^\s*"""\s*$`. `"""json` produces a false *Unclosed DocString*; `'''` is not seen at all, lints clean, and used to have its body reindented as though it were steps. |
 | Sourcing the plugin twice is harmless | A Vim9 script's script-local items — vars, imports, `def`s — are cleared before a re-source, and a load guard then `finish`es before they can come back. Autocommands from the first load outlive it and hit `E121`. `vim9script noclear`, invariant 10. |
 | `:colorscheme` wipes the plugin's highlight groups | `highlight default link` is re-established by the `:highlight clear` a colorscheme runs, so the links survive — probed before deciding not to add a `ColorScheme` autocommand. `check_reload.vim:76` keeps one such probe (`colorscheme default`). |
+| A tag line says what it tags | It says nothing at all. Gherkin allows tagging an `Examples:` block, so treating a tag as the start of the next scenario reported the outline above it as having no table *and* the tagged `Examples:` as orphaned. Two fixtures had tags, both immediately before a `Scenario:`, where the wrong rule gives the right answer. |
 | `&modified == 0` proves the formatter wrote nothing | Only for a buffer loaded from disk. A buffer built with `setline()` in a test is already modified before the formatter runs, so the assertion fails whatever the code does. Compare `b:changedtick` across the save instead — it asserts the stronger thing. |
 
 **A probe whose input already looks like the expected answer proves nothing.**

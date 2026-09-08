@@ -424,6 +424,7 @@ def ScanOutlines(lines: list<string>, docstring_body: dict<bool>): dict<list<num
   var orphaned: list<number> = []
   var outline_start = 0        # an outline still waiting for its Examples
   var outline_context = false  # an Examples here would belong to an outline
+  var tag_pending = false      # a tag block whose owner is not known yet
 
   for line_num in range(1, len(lines))
     if has_key(docstring_body, string(line_num))
@@ -435,9 +436,35 @@ def ScanOutlines(lines: list<string>, docstring_body: dict<bool>): dict<list<num
     var is_tag = line_text =~# '\C^[ 	]*@'
     var is_examples = line_text =~# '\C^[ 	]*Examples:'
 
-    # A new scenario or tag ends any pending outline and resets the
-    # expectation of an Examples block.
-    if is_normal_scenario || is_tag
+    # A tag does not say what it tags. Gherkin allows tagging an `Examples:`
+    # block, in which case the tag belongs to the outline still open - and
+    # treating it as the start of something new reported that outline as
+    # having no Examples *and* the Examples as orphaned, both wrong. So the
+    # decision waits for the first significant line after the tag block.
+    # Deferring rather than looking ahead also keeps this a single pass: a
+    # look-ahead over each tag would be quadratic on a file of many tags.
+    if is_tag
+      tag_pending = true
+      continue
+    endif
+    if line_text =~# '^[ 	]*$' || line_text =~# '^[ 	]*#'
+      continue
+    endif
+    if tag_pending
+      tag_pending = false
+      # It tagged something other than an Examples block, so whatever it
+      # introduces ends any outline that never got its table.
+      if !is_examples
+        if outline_start > 0
+          add(invalid, outline_start)
+          outline_start = 0
+        endif
+        outline_context = false
+      endif
+    endif
+
+    # A new plain scenario ends any pending outline the same way.
+    if is_normal_scenario
       if outline_start > 0
         add(invalid, outline_start)
         outline_start = 0
