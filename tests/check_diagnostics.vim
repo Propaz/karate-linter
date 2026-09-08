@@ -196,6 +196,20 @@ call add(s:out, '--- public api')
 call s:Ok('KarateLinterReport exists', exists('*KarateLinterReport'), 1)
 call s:Ok('no test-only SID hook left behind', exists('*KarateLinterSid'), 0)
 
+" --- 11. A placeholder inside a docstring body is still a usage ---
+" Gherkin substitutes <placeholder> into a docstring payload before Karate
+" ever sees it, so the usage scan in LintScenarioOutlines() deliberately does
+" not skip docstring_body - only *definitions* are skipped (invariant 3).
+" Narrowing that loop to the statement lines leaves every other assertion in
+" the suite green: in this fixture both Examples columns are used only inside
+" the payload, and skipping it invents two "unused header" warnings.
+call add(s:out, '--- placeholders inside a docstring body')
+call s:Fixture('34_docstring_placeholder_usage.feature')
+call s:Ok('a header used only in a docstring is not called unused',
+    \ len(filter(KarateLinterReport(), 'v:val.text =~# "not used in the Scenario Outline"')), 0)
+call s:Ok('and the fixture is clean of everything else',
+    \ len(KarateLinterReport()), 0)
+
 call add(s:out, '')
 call add(s:out, s:fail == 0 ? 'RESULT: ALL OK' : printf('RESULT: %d FAILURE(S)', s:fail))
 call writefile(s:out, s:root . '/tests/diagnostics.txt')
