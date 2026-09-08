@@ -98,12 +98,17 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 
 ## Performance work
 
-1. **Profile first.**
+1. **Profile first**, and profile the *engine*:
    ```vim
    profile start /tmp/profile.txt
-   profile! file */karate_linter.vim
+   profile! file */karate/linter.vim
    ```
    then `sed -n '/FUNCTIONS SORTED ON TOTAL TIME/,/^$/p' /tmp/profile.txt`.
+
+   The pattern matters. `*/karate_linter.vim` matches only
+   `plugin/karate_linter.vim`, which is 154 lines of options, commands and
+   autocommands with no hot code in it — it profiles cleanly and tells you
+   nothing. Everything worth measuring is in `autoload/karate/linter.vim`.
 
 2. **Benchmark on a realistic file, not a synthetic one.** A generated file
    with no quotes made the delimiter scanner look free; on a file with quotes
@@ -138,7 +143,8 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 
 6. **Prove the old and new paths agree before deleting the old one.** The
    `awk` path was not removed until its output had been shown identical to the
-   Vim fallback's on all 30 fixtures. That snapshot suite came first and became
+   Vim fallback's on every fixture that existed then — 30 of them; there are
+   more now. That snapshot suite came first and became
    `tests/baseline.sorted.txt`; every optimisation since has been reviewed as a
    diff against it rather than by reasoning about the change.
 
@@ -157,17 +163,33 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
    file is `cucumber` (the plugin hooks the file pattern, not the filetype),
    and the cursor message is prefixed `[karate]`, lowercase.
 
-   **Prove a regression test fails against the old code.** Extract the
-   previous version into a scratch tree and run the new test file there:
+   **Prove a regression test fails against the old code.** Build a scratch
+   tree at the ref *before* the fix, drop the new test into it, and run it
+   there:
 
    ```sh
-   mkdir -p /tmp/klold && cp -r autoload plugin tests /tmp/klold/
-   git show HEAD:plugin/karate_linter.vim > /tmp/klold/plugin/karate_linter.vim
-   (cd /tmp/klold && vim -Nu NONE -es -S tests/check_reload.vim </dev/null)
+   rm -rf /tmp/klold && mkdir -p /tmp/klold
+   git archive <before> | tar -x -C /tmp/klold   # tracked files only
+   cp tests/check_reload.vim /tmp/klold/tests/   # new test, old engine
+   (cd /tmp/klold && rm -f tests/reload.txt \
+     && timeout 90 vim -Nu NONE -es -S tests/check_reload.vim </dev/null)
+   grep 'RESULT:' /tmp/klold/tests/reload.txt
    ```
 
    A green test that would also have been green before the fix is worth
-   nothing, and it is not obvious from reading it.
+   nothing, and it is not obvious from reading it. Two ways this check lies,
+   both of which have happened:
+
+   - **`<before>` is not `HEAD` once the fix is committed.** `HEAD` then
+     already contains the fix, and the test passes for the honest reason. Use
+     the commit before it, or the merge-base of the branch.
+   - **A stale result file reads as success.** Each `check_*.vim` writes its
+     verdict to a gitignored `tests/<name>.txt`, and a script that dies on
+     startup writes nothing at all — so whatever is already at that path is
+     what you read. `cp -r tests` copies one in; `git archive` cannot, since
+     the file is untracked, and the `rm -f` makes a missing file distinguish
+     itself from a passing one. Assert on the printed `RESULT:` line, not on
+     the exit status.
 3. Merge with `--no-ff`, tag annotated (`git tag -a vX.Y.Z`), push branch and
    tag separately.
 4. A breaking change means a major version. Bumping the minimum Vim version
@@ -227,7 +249,7 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | Searching outwards from the cursor finds the docstring it is in | With the cursor *between* two blocks, a backwards search finds a closing delimiter and a forwards search an opening one, and the two bracket the cursor just like a real block. Pair the delimiters from the top instead — `DocstringBlockAt()`. |
 | The engine recognises every Gherkin docstring fence | `DOCSTRING_PATTERN` is `^\s*"""\s*$`. `"""json` produces a false *Unclosed DocString*; `'''` is not seen at all, lints clean, and used to have its body reindented as though it were steps. |
 | Sourcing the plugin twice is harmless | A Vim9 script's script-local items — vars, imports, `def`s — are cleared before a re-source, and a load guard then `finish`es before they can come back. Autocommands from the first load outlive it and hit `E121`. `vim9script noclear`, invariant 10. |
-| `:colorscheme` wipes the plugin's highlight groups | `highlight default link` is re-established by the `:highlight clear` a colorscheme runs, so the links survive. Probed against four colorschemes before deciding not to add a `ColorScheme` autocommand. |
+| `:colorscheme` wipes the plugin's highlight groups | `highlight default link` is re-established by the `:highlight clear` a colorscheme runs, so the links survive — probed before deciding not to add a `ColorScheme` autocommand. `check_reload.vim:76` keeps one such probe (`colorscheme default`). |
 | `&modified == 0` proves the formatter wrote nothing | Only for a buffer loaded from disk. A buffer built with `setline()` in a test is already modified before the formatter runs, so the assertion fails whatever the code does. Compare `b:changedtick` across the save instead — it asserts the stronger thing. |
 
 **A probe whose input already looks like the expected answer proves nothing.**

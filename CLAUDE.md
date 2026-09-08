@@ -13,7 +13,7 @@ forgotten.
 |---|---|
 | `plugin/karate_linter.vim` | Thin. Options, highlight links, commands, autocommands. Vim9 script. |
 | `autoload/karate/linter.vim` | The engine. Reached via `import autoload`, so it is not compiled until a `.feature` buffer exists. |
-| `tests/` | The suite. `tests/baseline.*.txt` is committed and is the contract. |
+| `tests/` | The suite. `tests/baseline.sorted.txt` is committed and is the contract. |
 
 ## The contract
 
@@ -24,6 +24,16 @@ fixtures. **Any diff there is a change in what the linter reports.**
 tests/run.sh            # compare against the baseline
 tests/run.sh --accept   # re-record it
 ```
+
+**Only `baseline.sorted.txt` is a gate.** A diff in `baseline.raw.txt` prints
+as a `note` and does *not* fail the suite — it records the order the report is
+built in, which is the order the location list puts the user through. Read
+that note; nothing else will make you.
+
+The two commands are not symmetric. `--accept` runs `dump_report.vim` alone,
+so it re-records the baseline without running any of the six `check_*.vim`
+scripts — it can leave a red suite looking accepted. Run the suite again
+afterwards.
 
 Never run `--accept` to make a red suite green. Read every line of the diff
 first and be able to say why each one moved. Most of the real bugs in this
@@ -144,7 +154,9 @@ after a comment" — and rebuild it with invented content.
 
 - **Measure before optimising, and measure again after.** This repository's
   history contains an "obvious" optimisation that turned out to be worth 0.5%
-  and was reverted, and another worth 21×. Guessing was wrong both times.
+  and was reverted, and others worth several times over. Guessing was wrong
+  both ways. The numbers are in `docs/claude/playbooks.md`; keep them in that
+  one place rather than restating them here, where they go stale unnoticed.
 - **A behaviour change must be visible in the baseline diff** and explained in
   the commit message.
 - **A new rule needs fixtures for both answers** — one that must fire and one
