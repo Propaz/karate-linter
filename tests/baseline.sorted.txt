@@ -142,3 +142,5 @@
     (no issues)
 === 33_docstring_hanging_left.feature
     (no issues)
+=== 34_docstring_placeholder_usage.feature
+    (no issues)

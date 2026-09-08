@@ -9,7 +9,7 @@ vim9script noclear
 # `noclear` is load-bearing, not tidiness. Sourcing a Vim9 script a second
 # time - `:source $MYVIMRC`, or a plugin manager's update hook - clears its
 # script-local items first, and the guard below then returns before the
-# `import autoload` on line 25 can re-create them. The autocommands and
+# `import autoload` further down can re-create them. The autocommands and
 # commands from the first load survive that, still carrying this script's
 # context, so every one of them broke with `E121: Undefined variable: linter`
 # until Vim was restarted - on CursorMoved, which is to say on every
