@@ -62,6 +62,21 @@ after a comment" — and rebuild it with invented content.
    Fixture 30 asserts that the reported column, sliced out of the line by
    bytes, is exactly the expected text.
 
+   **Three measures of "column" live here**, each correct about a different
+   thing. Mixing them up is the likeliest way to land a diagnostic in the
+   wrong place, or nowhere:
+
+   | Measure | Where | Unit |
+   |---|---|---|
+   | `col` / `end_col` of a diagnostic | every rule, `prop_add_list()` | 1-based **bytes** |
+   | the `max_line_length` threshold | `ColumnBeyondWidth()` | **display cells** |
+   | clipping the cursor message | `TruncateToWidth()` | **display cells** |
+
+   `ColumnBeyondWidth()` is where they meet: it takes a limit in cells and
+   returns the *byte* offset of the character past it, so a rule can compare
+   widths and still anchor in bytes. Both descriptions are true of that one
+   number, which is why the pair reads like a contradiction until you look.
+
 2. **Never build a regular expression out of text taken from the file.**
    Placeholder names and Examples headers are user text and may contain
    metacharacters. Use `stridx()`, or positions produced by `ParseTableRow()`.
@@ -94,7 +109,13 @@ after a comment" — and rebuild it with invented content.
    docstring rule at once, so it needs its own change and its own baseline.
 
    **Two classes of command, and the line between them is the payload.**
-   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical.
+   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical —
+   and "the payload" is wider than the body lines. A tab on a *delimiter*
+   line changes the indentation Gherkin strips from every body line, so
+   expanding it rewrites the string Karate receives without touching a body
+   line at all. That is why the save-time tab fix skips whole docstring
+   blocks, delimiters included, while the trailing-space fix only needs to
+   skip the bodies; `DocstringMaps()` returns both answers for that reason.
    `FormatJsonInDocstring()` and `AlignDocstringBody()` rewrite it on purpose,
    so they are explicit, per-block and cursor-driven, and **must never be
    wired into an autocommand**. Anything that edits a payload belongs in the

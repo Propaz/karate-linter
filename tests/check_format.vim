@@ -373,6 +373,15 @@ catch
 endtry
 call s:Ok('no tabs: raises nothing', s:raised, '')
 
+" The explicit command is in the class that may rewrite a payload, and does:
+" this is the other half of the split asserted in section 11 below, so that
+" narrowing the save path cannot quietly narrow this too.
+execute 'edit! ' . fnameescape(s:root . '/tests/fixtures/35_tabs_around_docstrings.feature')
+setlocal shiftwidth=4
+doautocmd BufWinEnter
+KarateTabsToSpaces
+call s:Ok('explicit command reaches into a payload', search('\t', 'nw'), 0)
+
 " --- 9. :KarateFmtJson rewrites the block it is in ---
 call add(s:out, '--- KarateFmtJson')
 if !executable('jq') && !executable('python3') && !executable('python')
@@ -494,6 +503,27 @@ call s:Ok('blank line did not stop the shift',
     \ execute('KarateAlignDocstring') =~# 'shifted right by 4', v:true)
 call s:Ok('body shifted', getline(9, 11), ['        first();', '', '          second();'])
 call s:Ok('blank line still blank', getline(10), '')
+
+" --- 11. The save-time tab fix must not reach a payload ---
+" ExpandTabs() serves both classes of command, so the policy has to differ
+" where the implementation does not. Skipping the docstring *body* is not
+" enough: a tab on a delimiter line changes the indentation Gherkin strips
+" from every body line, so expanding it rewrites the payload without touching
+" a body line at all. Fixture 35 carries all three cases - a structural tab,
+" a tab inside a payload deeper than its delimiter, and a tab on a delimiter.
+call add(s:out, '--- save-time tabs vs payload')
+let s:f = s:root . '/tests/fixtures/35_tabs_around_docstrings.feature'
+let s:orig = readfile(s:f)
+execute 'edit! ' . fnameescape(s:f)
+setlocal shiftwidth=2
+doautocmd BufWinEnter
+doautocmd BufWritePre
+call s:Ok('the string Karate receives is unchanged',
+    \ s:Payload(getline(1, '$')), s:Payload(s:orig))
+call s:Ok('a structural tab is still expanded', getline(7), "  Given path 'orders'")
+call s:Ok('a tab inside the payload survives', getline(11) =~# "\t", v:true)
+call s:Ok('a tab on a delimiter line survives', getline(17) =~# "\t", v:true)
+call s:Ok('the fixture on disk is untouched', readfile(s:f), s:orig)
 
 call add(s:out, '')
 call add(s:out, s:fail == 0 ? 'RESULT: ALL OK' : printf('RESULT: %d FAILURE(S)', s:fail))

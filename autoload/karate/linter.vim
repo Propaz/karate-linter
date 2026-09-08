@@ -981,7 +981,10 @@ export def GenerateReport(): list<dict<any>>
     endif
   endfor
 
-  var max_len = g:karate_linter_max_line_length
+  # get(), like every other option. This was the one bare g: read in the
+  # engine, so a harness that reached GenerateReport() without sourcing
+  # plugin/ - the engine is imported lazily - died with E121 here.
+  var max_len = get(g:, 'karate_linter_max_line_length', 120)
   var max_len_level = RuleLevel('max_line_length')
 
   # This loop doubles as the single source of truth for docstring regions.
@@ -1620,35 +1623,60 @@ enddef
 # that can be fixed mechanically - and both are Error level, which is what
 # used to stop the formatter from running at all: a single stray trailing
 # space meant a save reformatted nothing and said nothing about why.
-def ExpandTabs(): number
+# Where the docstrings are, in the two shapes the fixup passes need. They are
+# not the same answer, and the difference is what a change to the line does to
+# the indentation Gherkin dedents the payload by:
+#
+#   body   the lines between the delimiters. Trailing whitespace there is part
+#          of the string being sent, so the trailing-space fix skips them.
+#   block  the same lines plus both delimiters. A tab on a *delimiter* line
+#          changes the amount Gherkin strips from every body line, so
+#          expanding it rewrites the payload without touching a body line at
+#          all - which is why the tab fix has to skip the whole block.
+def DocstringMaps(lines: list<string>): list<list<bool>>
+  var body: list<bool> = repeat([false], len(lines))
+  var block: list<bool> = repeat([false], len(lines))
+
+  for range_pair in FindAllDocstringRanges(lines)
+    block[range_pair[0] - 1] = true
+    block[range_pair[1] - 1] = true
+    for lnum in range(range_pair[0] + 1, range_pair[1] - 1)
+      body[lnum - 1] = true
+      block[lnum - 1] = true
+    endfor
+  endfor
+
+  return [body, block]
+enddef
+
+# `skip` is indexed by line and marks what this caller may not touch. An empty
+# list means nothing is off limits, which is what :KarateTabsToSpaces wants:
+# it is in the class of commands that may rewrite a payload, and doing so is
+# the point of it. The save path passes the docstring blocks instead, so there
+# is still one implementation of what replacing a tab means and only the
+# policy differs.
+def ExpandTabs(skip: list<bool> = []): number
   var spaces = repeat(' ', &shiftwidth > 0 ? &shiftwidth : 4)
+  var lines = getline(1, '$')
+  var guarded = !empty(skip)
   var changed = 0
 
-  for lnum in range(1, line('$'))
-    var line = getline(lnum)
-    if stridx(line, "\t") < 0
+  for i in range(len(lines))
+    if guarded && skip[i]
       continue
     endif
-    setline(lnum, substitute(line, '\t', spaces, 'g'))
+    if stridx(lines[i], "\t") < 0
+      continue
+    endif
+    setline(i + 1, substitute(lines[i], '\t', spaces, 'g'))
     changed += 1
   endfor
 
   return changed
 enddef
 
-def StripTrailingWhitespace(): number
+def StripTrailingWhitespace(payload: list<bool>): number
   var lines = getline(1, '$')
-
-  # Docstring bodies are payload and the trailing-space rule does not look
-  # inside them, so neither does the fix: trailing whitespace there is part
-  # of the string being sent.
-  var payload: list<bool> = repeat([false], len(lines))
-  for range_pair in FindAllDocstringRanges(lines)
-    for lnum in range(range_pair[0] + 1, range_pair[1] - 1)
-      payload[lnum - 1] = true
-    endfor
-  endfor
-
   var changed = 0
   for i in range(len(lines))
     if payload[i] || lines[i] !~# '\s\+$'
@@ -1674,13 +1702,7 @@ def ForeignFence(): number
   endif
 
   var lines = getline(1, '$')
-
-  var payload: list<bool> = repeat([false], len(lines))
-  for range_pair in FindAllDocstringRanges(lines)
-    for lnum in range(range_pair[0] + 1, range_pair[1] - 1)
-      payload[lnum - 1] = true
-    endfor
-  endfor
+  var payload = DocstringMaps(lines)[0]
 
   for i in range(len(lines))
     if !payload[i] && lines[i] =~# FOREIGN_FENCE
@@ -1696,12 +1718,27 @@ enddef
 # formatter convert them anyway would be the plugin arguing with its own
 # configuration.
 def FixupPass(): number
-  var changed = 0
-  if RuleOn('tabs')
-    changed += ExpandTabs()
+  # C-level scans before anything else. Almost every save has nothing for
+  # either pass to do, and the map below is the expensive part - the same
+  # shape as the pre-check in front of ForeignFence(), which cost 3.8 ms of
+  # every save to answer "no" before it got one.
+  var want_tabs = RuleOn('tabs') && search("\t", 'cnw') > 0
+  var want_trailing = RuleOn('trailing_space') && search('\s\+$', 'cnw') > 0
+  if !want_tabs && !want_trailing
+    return 0
   endif
-  if RuleOn('trailing_space')
-    changed += StripTrailingWhitespace()
+
+  # One map build for both passes. Expanding a tab cannot move a docstring
+  # boundary - `\t"""` and `    """` both match DOCSTRING_PATTERN, and the
+  # line count does not change - so the map stays valid across the first pass.
+  var maps = DocstringMaps(getline(1, '$'))
+
+  var changed = 0
+  if want_tabs
+    changed += ExpandTabs(maps[1])
+  endif
+  if want_trailing
+    changed += StripTrailingWhitespace(maps[0])
   endif
   return changed
 enddef
