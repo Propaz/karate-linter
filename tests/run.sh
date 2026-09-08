@@ -134,6 +134,12 @@ opt_case "stray placeholder: rule off"            "0 -"     --cmd 'let g:karate_
 rm -f "$KL_RESULT"
 
 echo
+echo "== conventions =="
+"$VIM" -Nu NONE -es -S tests/check_conventions.vim
+sed 's/^/  /' tests/conventions.txt
+grep -q 'RESULT: ALL OK' tests/conventions.txt || status=1
+
+echo
 if [[ $status -eq 0 ]]; then
     echo "SUITE OK"
 else

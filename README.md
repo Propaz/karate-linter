@@ -141,6 +141,10 @@ You can customize the linter by adding `let g:variable_name = value` to your `vi
     -   Default: `1` (enabled)
 -   `g:karate_linter_indent_width`: Spaces per indent level.
     -   Default: `4`
+-   `g:karate_linter_debounce_ms`: How long typing has to stop before the
+    buffer is re-linted. Raise it on a very large file; setting it to `0`
+    lints on every change.
+    -   Default: `150`
 
 ### Rules and Levels
 For each rule, you can enable/disable it (`_rule`) and set its severity level (`_level`).
