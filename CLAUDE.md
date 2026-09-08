@@ -65,174 +65,199 @@ after a comment" — and rebuild it with invented content.
 
 ## Invariants that are easy to break
 
-1. **Columns are byte offsets.** `prop_add()` wants bytes. In Vim9 script
-   `str[i]` indexes by *character*, so the scanners use `strpart(str, i, 1)`.
-   Fixture 30 asserts that the reported column, sliced out of the line by
-   bytes, is exactly the expected text.
+They are named rather than numbered, and referred to by name everywhere. The
+numbering drifted once already — a renumbering left a reference pointing at the
+wrong rule — and `tests/check_conventions.vim` now fails on a reference that
+names nothing.
 
-   **Three measures of "column" live here**, each correct about a different
-   thing. Mixing them up is the likeliest way to land a diagnostic in the
-   wrong place, or nowhere:
+### Columns are byte offsets
 
-   | Measure | Where | Unit |
-   |---|---|---|
-   | `col` / `end_col` of a diagnostic | every rule, `prop_add_list()` | 1-based **bytes** |
-   | the `max_line_length` threshold | `ColumnBeyondWidth()` | **display cells** |
-   | clipping the cursor message | `TruncateToWidth()` | **display cells** |
+`prop_add()` wants bytes. In Vim9 script `str[i]` indexes by *character*, so
+the scanners use `strpart(str, i, 1)`. Fixture 30 asserts that the reported
+column, sliced out of the line by bytes, is exactly the expected text.
 
-   `ColumnBeyondWidth()` is where they meet: it takes a limit in cells and
-   returns the *byte* offset of the character past it, so a rule can compare
-   widths and still anchor in bytes. Both descriptions are true of that one
-   number, which is why the pair reads like a contradiction until you look.
+Three measures of "column" live here, each correct about a different thing.
+Mixing them up is the likeliest way to land a diagnostic in the wrong place,
+or nowhere:
 
-2. **Never build a regular expression out of text taken from the file.**
-   Placeholder names and Examples headers are user text and may contain
-   metacharacters. Use `stridx()`, or positions produced by `ParseTableRow()`.
-   Interpolating a name into a pattern once produced a column of 0 and an
-   `E964` out of `prop_add()` that killed the render for the whole buffer.
+| Measure | Where | Unit |
+|---|---|---|
+| `col` / `end_col` of a diagnostic | every rule, `prop_add_list()` | 1-based **bytes** |
+| the `max_line_length` threshold | `ColumnBeyondWidth()` | **display cells** |
+| clipping the cursor message | `TruncateToWidth()` | **display cells** |
 
-3. **Docstring bodies are payload, not Karate syntax.** Statement-level rules
-   skip them (`docstring_body`, built once in the main loop). But *usages*
-   still count there: Karate evaluates `#(expr)` inside docstrings and Gherkin
-   substitutes `<placeholder>` into them, so skipping a whole line in the
-   unused-variable or unused-header rules invents false positives. Only
-   *definitions* are skipped.
+`ColumnBeyondWidth()` is where they meet: it takes a limit in cells and
+returns the *byte* offset of the character past it, so a rule can compare
+widths and still anchor in bytes. Both descriptions are true of that one
+number, which is why the pair reads like a contradiction until you look.
 
-4. **The formatter must not change a docstring's payload.** Gherkin strips the
-   indentation of the opening `"""` from every body line, so the body has to
-   move by exactly the amount the delimiter moved — or the string Karate sends
-   changes. `ApplyIndent()` shifts the body textually, one space at a time, so
-   it never rewrites a tab and never touches a blank line. `check_format.vim`
-   asserts the dedented payload directly; that assertion, and nothing else,
-   is what pins this down.
+### Never build a pattern out of file text
 
-   The corollary: **`DOCSTRING_PATTERN` is the whole engine's idea of where a
-   docstring is, and it only matches a bare `"""` alone on its line.** Gherkin
-   also allows `"""json` and `'''`, and for those the engine's block
-   boundaries are simply wrong — `'''` linted clean and the indent pass then
-   moved the delimiter without its body. `ForeignFence()` therefore switches
-   the *entire* formatter off for such a file, fixup pass included: with the
-   boundaries unknown, stripping a trailing space is as damaging as
-   reindenting. Widening `DOCSTRING_PATTERN` instead would move every
-   docstring rule at once, so it needs its own change and its own baseline.
+Placeholder names and Examples headers are user text and may contain
+metacharacters. Use `stridx()`, or positions produced by `ParseTableRow()`.
+Interpolating a name into a pattern once produced a column of 0 and an `E964`
+out of `prop_add()` that killed the render for the whole buffer.
 
-   **Two classes of command, and the line between them is the payload.**
-   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical —
-   and "the payload" is wider than the body lines. A tab on a *delimiter*
-   line changes the indentation Gherkin strips from every body line, so
-   expanding it rewrites the string Karate receives without touching a body
-   line at all. That is why the save-time tab fix skips whole docstring
-   blocks, delimiters included, while the trailing-space fix only needs to
-   skip the bodies; `DocstringMaps()` returns both answers for that reason.
-   `FormatJsonInDocstring()` and `AlignDocstringBody()` rewrite it on purpose,
-   so they are explicit, per-block and cursor-driven, and **must never be
-   wired into an autocommand**. Anything that edits a payload belongs in the
-   second class, however tempting it looks as a save-time fix.
+### A diagnostic is one fixed record
 
-   Note also that Gherkin's dedent *clamps*: it cannot remove more whitespace
-   than a line has, so a body indented less than its own delimiter arrives
-   flattened. `s:Payload()` in `check_format.vim` models that; without the
-   clamp it sliced into the content of such a line and the assertion was
-   comparing nonsense.
+The shape is `{lnum, col, end_col, text, level}`: `col` a 1-based *byte*
+offset, `end_col` exclusive and equal to `col + length`, `level` one of the
+two highlight group names. Every rule, every test and the baseline format
+depend on it, and the only place it is written down is the comment above
+`KarateLinterReport()` in `plugin/`.
 
-5. **Never echo from `UpdateDiagnostics()`.** It runs from the buffer-load and
-   buffer-write autocommands, where the cursor is not placed yet and Vim is
-   about to print its own message; a second one forces a `Press ENTER` prompt.
-   `OnLintTimer()` is the only safe place to refresh the message.
+A malformed record is discarded in silence. `UpdateDiagnostics()` skips any
+record with `col < 1` or `end_col <= col` before rendering — on purpose, so
+that one bad column cannot abort the render for a whole buffer the way the
+`E964` in *Never build a pattern out of file text* did. But the record still
+comes back from `GenerateReport()`, so it still reaches the report and the
+baseline: **the suite can be green while nothing at all is highlighted.** A
+new rule wants a look at a real buffer, not only a baseline line.
 
-6. **`=~` still honours `'ignorecase'` in Vim9.** Comparison operators do not,
-   but pattern matching does. Any pattern matching a Gherkin keyword needs
-   `\C`. Legacy patterns without it were left as they were — do not assume a
-   rule is case-sensitive, check.
+### Docstring bodies are payload
 
-7. **Close `echohl`.** Every `echohl X` needs a matching `echohl NONE`, or the
-   highlight leaks into every later message in the session.
+The body of a `"""` block is not Karate syntax. Statement-level rules skip it
+(`docstring_body`, built once in the main loop). But *usages* still count
+there: Karate evaluates `#(expr)` inside docstrings and Gherkin substitutes
+`<placeholder>` into them, so skipping a whole line in the unused-variable or
+unused-header rules invents false positives. Only *definitions* are skipped.
+Fixture 34 is the half of that which has no other cover.
 
-8. **Dictionary keys are strings in Vim9.** The docstring map and the per-line
-   diagnostic index key on `string(lnum)` explicitly. Two consequences bit at
-   once in the formatting code: `sort(keys(d), 'n')` does **not** sort — the
-   `'n'` flag is a no-op on a list of strings, and it returns the dictionary's
-   own order looking like it worked. Iterate a list in file order instead.
+### The formatter must not change a payload
 
-9. **A range inside `:execute` needs a leading colon.** Vim9 rejects
-   `execute '5,9delete _'` with `E1050`; it has to be `execute ':5,9…'`, `%s`
-   included. Prefer `deletebufline()` and friends, which take no range at all.
-   `silent!` in front of such a command hides the error and leaves the command
-   silently doing nothing — that shipped in 2.0.0 and made
-   `:KarateTabsToSpaces` a no-op that still reported success.
+Gherkin strips the indentation of the opening `"""` from every body line, so
+the body has to move by exactly the amount the delimiter moved — or the string
+Karate sends changes. `ApplyIndent()` shifts the body textually, one space at
+a time, so it never rewrites a tab and never touches a blank line.
+`check_format.vim` asserts the dedented payload directly; that assertion, and
+nothing else, is what pins this down.
 
-10. **`plugin/karate_linter.vim` must stay `vim9script noclear`.** A guarded
-    Vim9 script needs it. Re-sourcing one — `:source $MYVIMRC`, a plugin
-    manager's update hook — clears its script-local items *before* executing,
-    and the `exists('g:loaded_karate_linter')` guard then `finish`es before
-    the `import autoload` can be re-created. The autocommands and commands
-    from the first load survive that and still resolve against the emptied
-    script, so every one of them dies with `E121: Undefined variable: linter`
-    until Vim is restarted — on `CursorMoved`, which is to say on every
-    keystroke. `KarateLinterReport()` kept working and hid how broad it was:
-    it is a compiled `def g:` whose reference resolved at compile time.
-    `tests/check_reload.vim` covers it, and 12 of its assertions fail if the
-    `noclear` is dropped.
+Gherkin's dedent *clamps*: it cannot remove more whitespace than a line has,
+so a body indented less than its own delimiter arrives flattened.
+`s:Payload()` in `check_format.vim` models that; without the clamp it sliced
+into the content of such a line and the assertion was comparing nonsense.
 
-    The highlight links next to it need no such care: `highlight default link`
-    is restored by the `:highlight clear` inside `:colorscheme`, so they
-    survive a colorscheme change and the plugin wants no `ColorScheme`
-    autocommand. That was worth probing — the expectation was the opposite.
+### The engine knows only one docstring fence
 
-11. **A diagnostic is one fixed record, and a malformed one is discarded in
-    silence.** The shape is `{lnum, col, end_col, text, level}`: `col` a
-    1-based *byte* offset, `end_col` exclusive and equal to `col + length`,
-    `level` one of the two highlight group names. Every rule, every test and
-    the baseline format depend on it, and the only place it is written down is
-    the comment above `KarateLinterReport()` in `plugin/`.
+`DOCSTRING_PATTERN` is the whole engine's idea of where a docstring is, and it
+only matches a bare `"""` alone on its line. Gherkin also allows `"""json` and
+the three-apostrophe fence, and for those the engine's block boundaries are
+simply wrong — the apostrophe form linted clean and the indent pass then moved
+the delimiter without its body. `ForeignFence()` therefore switches the
+*entire* formatter off for such a file, fixup pass included: with the
+boundaries unknown, stripping a trailing space is as damaging as reindenting.
+Widening `DOCSTRING_PATTERN` instead would move every docstring rule at once,
+so it needs its own change and its own baseline.
 
-    `UpdateDiagnostics()` skips any record with `col < 1` or
-    `end_col <= col` before rendering — on purpose, so that one bad column
-    cannot abort the render for a whole buffer the way the `E964` in invariant
-    2 did. But the record still comes back from `GenerateReport()`, so it
-    still reaches the report and the baseline: **the suite can be green while
-    nothing at all is highlighted.** A new rule wants a look at a real buffer,
-    not only a baseline line.
+### Two classes of command
 
-12. **`RuleOn()` defaults to *off*.** It is `get(g:, '…_rule', 0)`, so a rule
-    whose options were never added to `DEFAULTS` is silently dead — no error at
-    any layer, no findings, and a baseline that looks like the rule simply had
-    nothing to say. `RuleLevel()` defaults to `Error` instead, which means a
-    half-registered rule can also come back at the wrong level. Registering
-    the options is step 4 of the playbook for exactly this reason.
+The line between them is the payload. `AutoFormatOnSave()` and
+`FormatBuffer()` must leave it byte-identical — and "the payload" is wider than
+the body lines. A tab on a *delimiter* line changes the indentation Gherkin
+strips from every body line, so expanding it rewrites the string Karate
+receives without touching a body line at all. That is why the save-time tab
+fix skips whole docstring blocks, delimiters included, while the
+trailing-space fix only needs to skip the bodies; `DocstringMaps()` returns
+both answers for that reason.
 
-    `max_line_length` is the one deliberate exception to the
-    `_rule`/`_level` pair: it is a numeric option with a `_level` and no
-    `_rule`, and it is the only option read as a bare `g:` rather than through
-    `get()` — so the engine hard-depends on `plugin/` having run.
+`FormatJsonInDocstring()` and `AlignDocstringBody()` rewrite the payload on
+purpose, so they are explicit, per-block and cursor-driven, and **must never
+be wired into an autocommand**. Anything that edits a payload belongs in that
+second class, however tempting it looks as a save-time fix. `ExpandTabs()`
+shows how to serve both: one implementation, and the caller supplies the
+policy.
 
-13. **The plugin defines no mappings, and that is a decision.** `<CR>` in the
-    location list is Vim's own built-in jump; claiming it — with a mapping or
-    a `FileType qf` autocommand — would break the thing the README's
-    troubleshooting section explains how to unbreak, since a user's `<C-m>`
-    mapping already collides with it. Signs, text properties, commands and
-    autocommands are the whole surface. Adding a mapping needs a reason and
-    an option to turn it off, not a convenience.
+### Never echo from UpdateDiagnostics
 
-14. **Sign and property identity is derived, not allocated.** The two property
-    types (`karate_lint_error`, `karate_lint_warn`) and the two sign
-    definitions are created once at engine load and are *global*, not
-    buffer-local — hence the `prop_type_get()` guard around each. Per buffer,
-    the sign group is `karate_linter_<bufnr>` and a sign's id is
-    `SIGN_ID_BASE + lnum`, so one line can only ever hold one sign and
-    re-linting replaces rather than accumulates. A second sign per line has
-    nowhere to go without changing that scheme, and `check_diagnostics.vim`
-    asserts both the one-sign-per-line count and that an error outranks a
-    warning in the gutter.
+It runs from the buffer-load and buffer-write autocommands, where the cursor
+is not placed yet and Vim is about to print its own message; a second one
+forces a `Press ENTER` prompt. `OnLintTimer()` is the only safe place to
+refresh the message.
 
-15. **The `b:` state belongs to `UpdateDiagnostics()`, not to
-    `GenerateReport()`.** The report function is pure; the autocommand-driven
-    one is what sets `b:karate_has_errors` (the gate the formatter refuses on),
-    `b:karate_diagnostics` (the per-line index, keyed `string(lnum)`),
-    `b:karate_echoed` and `b:karate_just_formatted_json`. A test that calls
-    `KarateLinterReport()` and then reads any of them reads a stale value or
-    none at all; fire `doautocmd BufWinEnter` first. Every existing test does,
-    and none of them says why.
+### The b: state belongs to UpdateDiagnostics
+
+`GenerateReport()` is pure; the autocommand-driven function is what sets
+`b:karate_has_errors` (the gate the formatter refuses on),
+`b:karate_diagnostics` (the per-line index, keyed `string(lnum)`),
+`b:karate_echoed` and `b:karate_just_formatted_json`. A test that calls
+`KarateLinterReport()` and then reads any of them reads a stale value or none
+at all; fire `doautocmd BufWinEnter` first. Every existing test does, and none
+of them says why.
+
+### Sign and property identity is derived
+
+The two property types (`karate_lint_error`, `karate_lint_warn`) and the two
+sign definitions are created once at engine load and are *global*, not
+buffer-local — hence the `prop_type_get()` guard around each. Per buffer, the
+sign group is `karate_linter_<bufnr>` and a sign's id is `SIGN_ID_BASE + lnum`,
+so one line can only ever hold one sign and re-linting replaces rather than
+accumulates. A second sign per line has nowhere to go without changing that
+scheme, and `check_diagnostics.vim` asserts both the one-sign-per-line count
+and that an error outranks a warning in the gutter.
+
+### RuleOn defaults to off
+
+It is `get(g:, '…_rule', 0)`, so a rule whose options were never added to
+`DEFAULTS` is silently dead — no error at any layer, no findings, and a
+baseline that looks like the rule simply had nothing to say. `RuleLevel()`
+defaults to `Error` instead, which means a half-registered rule can also come
+back at the wrong level. Registering the options is step 4 of the playbook for
+exactly this reason.
+
+`max_line_length` is the one deliberate exception to the `_rule`/`_level`
+pair: it is a numeric option with a `_level` and no `_rule`.
+
+### The plugin defines no mappings
+
+`<CR>` in the location list is Vim's own built-in jump; claiming it — with a
+mapping or a `FileType qf` autocommand — would break the thing the README's
+troubleshooting section explains how to unbreak, since a user's `<C-m>`
+mapping already collides with it. Signs, text properties, commands and
+autocommands are the whole surface. Adding a mapping needs a reason and an
+option to turn it off, not a convenience.
+
+### The plugin file must stay noclear
+
+`plugin/karate_linter.vim` begins `vim9script noclear`, and a guarded Vim9
+script needs it. Re-sourcing one — `:source $MYVIMRC`, a plugin manager's
+update hook — clears its script-local items *before* executing, and the
+`exists('g:loaded_karate_linter')` guard then `finish`es before the `import
+autoload` can be re-created. The autocommands and commands from the first load
+survive that and still resolve against the emptied script, so every one of
+them dies with `E121: Undefined variable: linter` until Vim is restarted — on
+`CursorMoved`, which is to say on every keystroke. `KarateLinterReport()` kept
+working and hid how broad it was: it is a compiled `def g:` whose reference
+resolved at compile time. `tests/check_reload.vim` covers it, and 12 of its
+assertions fail if the `noclear` is dropped; `tests/check_install.vim` fails
+two more, through Vim's own plugin loading.
+
+### Pattern matching honours ignorecase
+
+`=~` still respects `'ignorecase'` in Vim9. Comparison operators do not, but
+pattern matching does. Any pattern matching a Gherkin keyword needs `\C`.
+Legacy patterns without it were left as they were — do not assume a rule is
+case-sensitive, check.
+
+### Dictionary keys are strings
+
+The docstring map and the per-line diagnostic index key on `string(lnum)`
+explicitly. Two consequences bit at once in the formatting code:
+`sort(keys(d), 'n')` does **not** sort — the `'n'` flag is a no-op on a list of
+strings, and it returns the dictionary's own order looking like it worked.
+Iterate a list in file order instead.
+
+### A range inside execute needs a colon
+
+Vim9 rejects `execute '5,9delete _'` with `E1050`; it has to be
+`execute ':5,9…'`, `%s` included. Prefer `deletebufline()` and friends, which
+take no range at all. `silent!` in front of such a command hides the error and
+leaves the command silently doing nothing — that shipped in 2.0.0 and made
+`:KarateTabsToSpaces` a no-op that still reported success.
+
+### Close every echohl
+
+Every `echohl X` needs a matching `echohl NONE`, or the highlight leaks into
+every later message in the session.
 
 ## Conventions
 

@@ -1510,7 +1510,8 @@ const BLANK_LINE = '^\s*$'
 #
 # Both of these were live. `'''` linted clean and the indent pass then moved
 # the delimiter without its body, changing the string Karate receives - the
-# exact failure invariant 4 exists to prevent. `"""json` was already blocked,
+# exact failure *The engine knows only one docstring fence* describes.
+# `"""json` was already blocked,
 # but only by accident: it produces a false 'Unclosed DocString' error, and
 # the error gate caught it.
 const FOREIGN_FENCE = "^\\s*\"\"\"\\s*\\S\\|^\\s*'''"

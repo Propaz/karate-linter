@@ -115,7 +115,8 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
    fixtures all have well-formed middles.
 
 7. **A save-time pass may not edit a payload — the fixups included.** This is
-   the class boundary in invariant 4, and it is easy to cross here because a
+   the class boundary in *Two classes of command*, and it is easy to cross
+   here because a
    fixup looks too small to count: expanding a tab is one `substitute()`, and
    it shipped for three releases rewriting docstring payload on every save.
    Before adding or widening a pass, ask what it does to a *delimiter* line
@@ -299,7 +300,7 @@ vim -Nu /tmp/klvimrc -es -S tests/check_install.vim </dev/null
 | `check_options.vim` | one option scenario per invocation — see *Adding a rule*, step 6 |
 | `check_reload.vim` | surviving a re-source; the `noclear` invariant |
 | `check_install.vim` | the fresh-install path: Vim's own plugin loading, then a second source |
-| `check_conventions.vim` | the project's rules about itself — see *Auditing a claim* |
+| `check_conventions.vim` | the project's rules about itself — see *Auditing a claim, or a document, against the code* |
 
 Each writes its verdict to a gitignored `tests/<name>.txt`, and the pass
 contract is the literal line `RESULT: ALL OK`, which `run.sh` greps for. So
@@ -357,10 +358,10 @@ cheaper than reasoning. Things that turned out not to be as expected:
 | `sort(list, 'n')` sorts numeric strings | Only sorts real numbers. On `['114', '24']` it is a no-op and returns the input order. |
 | `gg=G` reindents a `.feature` file | With no `'indentexpr'` and no `'equalprg'` — a Vim with no gherkin indent plugin — `=` falls back to the internal C indenter and flattens the file to column 0. Under `'noexpandtab'` it indents with tabs. |
 | `doautocmd BufWritePre` fires `*.feature` autocommands | The pattern is matched against the buffer's **name**, so nothing fires in an unnamed buffer. A probe of the formatter did nothing at all and looked like "the formatter left it alone". `:file /tmp/x.feature` first. |
-| Gherkin dedents a docstring body by the delimiter's column | Only as far as the line allows — the dedent clamps. A body indented *less* than its own delimiter arrives flattened onto column 0, so the nesting on screen is not in the string. `:KarateAlignDocstring` exists for exactly that. |
+| Gherkin dedents a docstring body by the delimiter's column | Only as far as the line allows — the dedent clamps, so a body indented *less* than its own delimiter arrives flattened onto column 0 and the nesting on screen is not in the string. `:KarateAlignDocstring` exists for that; the modelling of it lives in *The formatter must not change a payload*. |
 | Searching outwards from the cursor finds the docstring it is in | With the cursor *between* two blocks, a backwards search finds a closing delimiter and a forwards search an opening one, and the two bracket the cursor just like a real block. Pair the delimiters from the top instead — `DocstringBlockAt()`. |
-| The engine recognises every Gherkin docstring fence | `DOCSTRING_PATTERN` is `^\s*"""\s*$`. `"""json` produces a false *Unclosed DocString*; `'''` is not seen at all, lints clean, and used to have its body reindented as though it were steps. |
-| Sourcing the plugin twice is harmless | A Vim9 script's script-local items — vars, imports, `def`s — are cleared before a re-source, and a load guard then `finish`es before they can come back. Autocommands from the first load outlive it and hit `E121`. `vim9script noclear`, invariant 10. |
+| The engine recognises every Gherkin docstring fence | It knows one: `DOCSTRING_PATTERN`, a bare `"""` alone on its line. The consequences, and why widening it is its own change, are in *The engine knows only one docstring fence*. |
+| Sourcing the plugin twice is harmless | A Vim9 script's script-local items — vars, imports, `def`s — are cleared before a re-source, and a load guard then `finish`es before they can come back. Autocommands from the first load outlive it and hit `E121`. `vim9script noclear` — see *The plugin file must stay noclear*. |
 | `:colorscheme` wipes the plugin's highlight groups | `highlight default link` is re-established by the `:highlight clear` a colorscheme runs, so the links survive — probed before deciding not to add a `ColorScheme` autocommand. `check_reload.vim:76` keeps one such probe (`colorscheme default`). |
 | A tag line says what it tags | It says nothing at all. Gherkin allows tagging an `Examples:` block, so treating a tag as the start of the next scenario reported the outline above it as having no table *and* the tagged `Examples:` as orphaned. Two fixtures had tags, both immediately before a `Scenario:`, where the wrong rule gives the right answer. |
 | `&modified == 0` proves the formatter wrote nothing | Only for a buffer loaded from disk. A buffer built with `setline()` in a test is already modified before the formatter runs, so the assertion fails whatever the code does. Compare `b:changedtick` across the save instead — it asserts the stronger thing. |
@@ -401,8 +402,8 @@ them.
 
 1. **Widening a shared boundary.** `DOCSTRING_PATTERN` is the engine's whole
    idea of where a docstring is, so widening it moves every docstring rule at
-   once — which is why invariant 4 asks for its own change and its own
-   baseline. The same shape: `STEP_PATTERN`, the `docstring_body` map, the
+   once — which is why *The engine knows only one docstring fence* asks for
+   its own change and its own baseline. The same shape: `STEP_PATTERN`, the `docstring_body` map, the
    level table in `ComputeLevels()`. The question to answer first is not "is
    the new pattern right" but "which rules change answer if it lands".
 
@@ -410,8 +411,8 @@ them.
    two classes of formatter command *is* the payload, and a save-time pass
    that edits one is the most damaging thing this plugin can do: Karate
    receives a different string and no diagnostic ever fires. Such a proposal
-   always arrives looking like a tidy save-time fix — see invariant 4 for
-   where it belongs instead.
+   always arrives looking like a tidy save-time fix — see *Two classes of
+   command* for where it belongs instead.
 
 3. **A rule's boundary.** Most of the cost in this project has been false
    positives, so what must *not* fire is the decision, and it is worth

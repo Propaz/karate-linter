@@ -259,7 +259,7 @@ call s:Ok('tag takes the Scenario level', getline(8), '    @tagged')
 " Gherkin allows `'''` and a content type after `\"\"\"`; this engine's
 " DOCSTRING_PATTERN matches neither, so it does not know where the docstrings
 " are. `'''` linted clean and the indent pass moved the delimiter without its
-" body -- the payload corruption invariant 4 exists to prevent.
+" body -- the corruption *The formatter must not change a payload* forbids.
 call add(s:out, '--- unrecognised fences')
 for [s:label, s:fence] in [['single-quoted', "'''"], ['typed', '"""json']]
     enew! | file /tmp/karate_fence.feature
