@@ -62,6 +62,21 @@ after a comment" — and rebuild it with invented content.
    Fixture 30 asserts that the reported column, sliced out of the line by
    bytes, is exactly the expected text.
 
+   **Three measures of "column" live here**, each correct about a different
+   thing. Mixing them up is the likeliest way to land a diagnostic in the
+   wrong place, or nowhere:
+
+   | Measure | Where | Unit |
+   |---|---|---|
+   | `col` / `end_col` of a diagnostic | every rule, `prop_add_list()` | 1-based **bytes** |
+   | the `max_line_length` threshold | `ColumnBeyondWidth()` | **display cells** |
+   | clipping the cursor message | `TruncateToWidth()` | **display cells** |
+
+   `ColumnBeyondWidth()` is where they meet: it takes a limit in cells and
+   returns the *byte* offset of the character past it, so a rule can compare
+   widths and still anchor in bytes. Both descriptions are true of that one
+   number, which is why the pair reads like a contradiction until you look.
+
 2. **Never build a regular expression out of text taken from the file.**
    Placeholder names and Examples headers are user text and may contain
    metacharacters. Use `stridx()`, or positions produced by `ParseTableRow()`.
