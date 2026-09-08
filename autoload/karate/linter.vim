@@ -981,7 +981,10 @@ export def GenerateReport(): list<dict<any>>
     endif
   endfor
 
-  var max_len = g:karate_linter_max_line_length
+  # get(), like every other option. This was the one bare g: read in the
+  # engine, so a harness that reached GenerateReport() without sourcing
+  # plugin/ - the engine is imported lazily - died with E121 here.
+  var max_len = get(g:, 'karate_linter_max_line_length', 120)
   var max_len_level = RuleLevel('max_line_length')
 
   # This loop doubles as the single source of truth for docstring regions.
