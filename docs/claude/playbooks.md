@@ -124,12 +124,23 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
    - moving the engine to `autoload/` for startup: within noise (35.9 vs
      36.2 ms), kept for architecture but the claim was corrected.
 
-   And one was kept because it was large: a sound C-level pre-check in front of
-   the character scanner, 953 → 202 ms.
+   The ones that were kept were kept because the measurement was large, and
+   each was measured in isolation before the work started:
+   - dropping the `awk` subprocess per keystroke for an in-process scan, plus
+     debouncing: 127 → 33 ms on a 220-line file, diagnostics identical;
+   - a sound C-level pre-check in front of the character scanner, 953 → 202 ms;
+   - the Vim9 port: 7.4× on an isolated loop, prototyped and measured *before*
+     1540 lines were rewritten.
 
 5. **A cheap pre-check must not lose findings.** Comparing bracket *counts* is
    cheaper than collapsing pairs but silently misses `a) + read(` and `} + {`,
    where the counts match. Both are fixtures now.
+
+6. **Prove the old and new paths agree before deleting the old one.** The
+   `awk` path was not removed until its output had been shown identical to the
+   Vim fallback's on all 30 fixtures. That snapshot suite came first and became
+   `tests/baseline.sorted.txt`; every optimisation since has been reviewed as a
+   diff against it rather than by reasoning about the change.
 
 ---
 
