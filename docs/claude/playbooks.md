@@ -45,15 +45,19 @@ Step-by-step procedures for the recurring kinds of work in this repository.
    has to export them twice — which is what the repeated `export` lines in
    that section are, not a copy-paste slip.
 
-   **Do not read that section as a measure of the suite's coverage.** The
-   convention was applied to the rules added after it and never backwards: 7
-   of the 22 `_rule` options have a toggle case, and the other 15 — the
-   `missing_*` family, `unused_variable`, `unclosed_docstring`,
-   `undefined_placeholder`, `unused_header` and the rest — have none, so for
-   those the `_rule = 0` path has never been executed at all. Nine of them
-   also rest on `12_clean.feature` alone for their negative half, which means
-   a false positive shows up only as a baseline line and never as a named
-   failure.
+   All 22 `_rule` options have a case as of 2.4, and
+   `check_conventions.vim` fails if a new rule arrives without one — the
+   fifteen that predated the convention were paid off in one pass, using
+   `rule_pair`, which writes both halves from a fixture and a match taken out
+   of the recorded baseline.
+
+   Coverage of the *off* switch is not coverage of the rule, though. Nine
+   rules still rest on `12_clean.feature` alone for their negative half — the
+   `missing_*` family, `duplicate_*`, `background_placement`,
+   `undefined_placeholder`, `unused_header`, `missing_examples` and
+   `orphaned_examples` — so for those a false positive shows up only as a
+   baseline line and never as a named failure. A near-miss fixture is what
+   fixes that, and it is the harder half to write.
 
 7. Document it in `README.md`, including the boundary from step 1.
 

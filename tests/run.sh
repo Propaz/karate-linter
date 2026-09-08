@@ -82,6 +82,18 @@ opt_case() {
         status=1
     fi
 }
+# Both halves of a rule's pair in one line: it fires on the fixture, and it
+# does not once its own option is 0. opt_case unsets KL_FIXTURE/KL_MATCH after
+# every case, so each half exports them again.
+rule_pair() {
+    local rule="$1" fixture="$2" match="$3" expect="$4"
+    export KL_FIXTURE="$fixture" KL_MATCH="$match"
+    opt_case "$rule: reported" "$expect"
+    export KL_FIXTURE="$fixture" KL_MATCH="$match"
+    opt_case "$rule: rule off" "0 -" \
+        --cmd "let g:karate_linter_${rule}_rule = 0"
+}
+
 export KL_RESULT=/tmp/karate_linter_opt.$$
 opt_case "defaults: rule active, Error"            "6 KarateLintError"
 opt_case "new option off"                          "0 -" \
@@ -130,6 +142,25 @@ export KL_FIXTURE=28_placeholder_outside_outline.feature KL_MATCH="never substit
 opt_case "stray placeholder reported"             "2 KarateLintWarn"
 export KL_FIXTURE=28_placeholder_outside_outline.feature KL_MATCH="never substituted"
 opt_case "stray placeholder: rule off"            "0 -"     --cmd 'let g:karate_linter_placeholder_outside_outline_rule = 0'
+
+# The rules that predate the toggle-test convention. Fixture and match come
+# from the recorded baseline, so a message reworded without updating these
+# fails here rather than silently matching nothing.
+rule_pair tabs                   01_simple_rules.feature   'Tabs are not allowed'                    "1 KarateLintError"
+rule_pair trailing_space         01_simple_rules.feature   'Trailing whitespace'                     "1 KarateLintError"
+rule_pair and_but                01_simple_rules.feature   "instead of 'But'"                        "1 KarateLintWarn"
+rule_pair no_space_after_keyword 01_simple_rules.feature   'Missing space after keyword'             "1 KarateLintError"
+rule_pair unused_variable        01_simple_rules.feature   'Unused variable'                         "2 KarateLintWarn"
+rule_pair call_read_space        17_callread.feature       "instead of 'callread'"                   "1 KarateLintError"
+rule_pair missing_examples       02_outlines_missing_examples.feature "corresponding 'Examples' block" "3 KarateLintError"
+rule_pair orphaned_examples      03_orphaned_examples.feature 'orphaned'                             "1 KarateLintError"
+rule_pair unclosed_docstring     04_docstring_unclosed.feature 'Unclosed DocString'                  "1 KarateLintError"
+rule_pair undefined_placeholder  06_placeholders.feature   'is not defined in the Examples table'    "1 KarateLintError"
+rule_pair unused_header          06_placeholders.feature   'but not used in the Scenario Outline'    "1 KarateLintWarn"
+rule_pair undefined_request_var  07_request_vars.feature   "used with 'request' is not defined"      "1 KarateLintError"
+rule_pair missing_feature        09_structure_missing_all.feature 'Missing mandatory'                "1 KarateLintWarn"
+rule_pair missing_scenario       09_structure_missing_all.feature 'blocks in the file'               "1 KarateLintWarn"
+rule_pair missing_background     11_structure_no_background.feature "Missing 'Background' block"     "1 KarateLintWarn"
 
 rm -f "$KL_RESULT"
 
