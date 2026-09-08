@@ -23,6 +23,19 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading to 2.5
+
+-   **A tagged `Examples:` block is no longer reported.** Gherkin lets you tag
+    one, and Karate honours it, but the outline scanner treated any tag as the
+    start of something new — so an outline whose `Examples:` carried a tag was
+    reported twice over: the outline as having no table, and its own table as
+    orphaned. If you had turned `missing_examples_rule` or
+    `orphaned_examples_rule` off because of that, turn them back on. Two
+    findings disappear from such a file and none appear.
+-   `KarateLinterReport()` is documented under [Commands](#commands) for the
+    first time. It is not new, and it remains the only function this plugin
+    exposes.
+
 ## Upgrading to 2.4
 
 -   **Saving no longer replaces tabs in or around a docstring.** It used to,
