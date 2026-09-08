@@ -106,7 +106,16 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
    unrecognised fence was only caught in the middle of a file by accident. The
    fixtures all have well-formed middles.
 
-7. **If the structure is uncertain, do nothing — including the fixups.** The
+7. **A save-time pass may not edit a payload — the fixups included.** This is
+   the class boundary in invariant 4, and it is easy to cross here because a
+   fixup looks too small to count: expanding a tab is one `substitute()`, and
+   it shipped for three releases rewriting docstring payload on every save.
+   Before adding or widening a pass, ask what it does to a *delimiter* line
+   too, not only to a body line. Anything that must edit a payload belongs in
+   the explicit, cursor-driven class instead, and `ExpandTabs()` shows the
+   shape: one implementation, and the caller supplies the policy.
+
+8. **If the structure is uncertain, do nothing — including the fixups.** The
    error gate and `ForeignFence()` both sit in front of the whole formatter for
    the same reason: when the docstring boundaries are unknown, `ExpandTabs()`
    and `StripTrailingWhitespace()` corrupt a payload just as surely as

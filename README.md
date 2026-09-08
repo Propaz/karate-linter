@@ -359,8 +359,19 @@ this order.
 **1. Fix what can be fixed.** Tabs become spaces and trailing whitespace is
 removed. Only for rules that are switched on: turning `tabs_rule` off tells the
 plugin that tabs are acceptable in this project, so it stops converting them.
-Trailing whitespace *inside* a docstring is left alone — the rule does not
-report it there, because it is part of the string being sent.
+
+Neither fix reaches into a docstring. Trailing whitespace there is left alone
+because the rule does not report it there — it is part of the string being
+sent. Tabs are left alone for a stronger reason: Gherkin strips the opening
+`"""`'s indentation from every body line, so replacing a tab anywhere in the
+block — on a body line *or on a delimiter* — changes the string Karate
+receives. A tab in or around a docstring is therefore reported and left in
+place, and the file is not reindented until you deal with it.
+
+If you do want those tabs replaced, `:KarateTabsToSpaces` is the command for
+it: like `:KarateFmtJson` and `:KarateAlignDocstring`, it is explicit and
+allowed to rewrite a payload, which is precisely why it is not wired into
+saving.
 
 **2. Lint, and stop here if errors remain.** Reindenting a file whose structure
 the linter cannot make sense of is how payloads get corrupted: with an unclosed

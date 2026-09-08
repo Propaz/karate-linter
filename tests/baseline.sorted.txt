@@ -144,3 +144,7 @@
     (no issues)
 === 34_docstring_placeholder_usage.feature
     (no issues)
+=== 35_tabs_around_docstrings.feature
+    L11  c9  -10  Error            Tabs are not allowed
+    L17  c1  -2   Error            Tabs are not allowed
+    L7   c1  -2   Error            Tabs are not allowed

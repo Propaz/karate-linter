@@ -94,7 +94,13 @@ after a comment" — and rebuild it with invented content.
    docstring rule at once, so it needs its own change and its own baseline.
 
    **Two classes of command, and the line between them is the payload.**
-   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical.
+   `AutoFormatOnSave()` and `FormatBuffer()` must leave it byte-identical —
+   and "the payload" is wider than the body lines. A tab on a *delimiter*
+   line changes the indentation Gherkin strips from every body line, so
+   expanding it rewrites the string Karate receives without touching a body
+   line at all. That is why the save-time tab fix skips whole docstring
+   blocks, delimiters included, while the trailing-space fix only needs to
+   skip the bodies; `DocstringMaps()` returns both answers for that reason.
    `FormatJsonInDocstring()` and `AlignDocstringBody()` rewrite it on purpose,
    so they are explicit, per-block and cursor-driven, and **must never be
    wired into an autocommand**. Anything that edits a payload belongs in the
