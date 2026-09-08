@@ -127,10 +127,11 @@ The plugin provides several commands that you can run manually:
 
 -   `:KarateFormat`
     -   Formats the buffer now: expands tabs, strips trailing whitespace and
-        reindents from the Gherkin structure. Same work the save does, on
-        demand — useful when auto-format on save is off, or on a file you have
-        just pasted in. It refuses to reindent a file that still has errors and
-        says so; see [Formatting](#formatting).
+        reindents from the Gherkin structure — all of it outside the
+        docstrings, whose contents it will not touch. Same work the save does,
+        on demand — useful when auto-format on save is off, or on a file you
+        have just pasted in. It refuses to reindent a file that still has
+        errors and says so; see [Formatting](#formatting).
 
 -   `:KarateFmtJson`
     -   Formats the JSON content within a docstring (`"""..."""`) block. The cursor must be inside the block you wish to format. It uses `jq` or `python -m json.tool` if available.
@@ -144,7 +145,21 @@ The plugin provides several commands that you can run manually:
         Like `:KarateFmtJson` it edits the payload, so it is never run for you.
 
 -   `:KarateTabsToSpaces`
-    -   Replaces all tab characters in the file with spaces, according to your `shiftwidth` setting.
+    -   Replaces all tab characters in the file with spaces, according to your
+        `shiftwidth` setting — *including* the ones inside a docstring, which
+        the save-time fix deliberately leaves alone. Like `:KarateFmtJson` and
+        `:KarateAlignDocstring` it may rewrite a payload, which is exactly why
+        you have to ask for it.
+
+There is also one function, for scripting and for reporting bugs:
+
+-   `KarateLinterReport()`
+    -   Returns the raw diagnostics for the current buffer as a list of
+        `{lnum, col, end_col, text, level}` dictionaries — `col` and `end_col`
+        are byte offsets, `level` is `KarateLintError` or `KarateLintWarn`.
+        `:echo len(KarateLinterReport())` is the quickest way to answer "does
+        the linter see anything here", and pasting its output into an issue
+        says more than a screenshot.
 
 ## Configuration
 
@@ -237,63 +252,6 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
         `g:karate_linter_unclosed_read_rule` / `_level` still works and is
         applied to this rule, so existing configuration keeps working.
 
-### Seeing the message
-
-Signs in the gutter (`>>` for errors, `W>` for warnings) and the inline
-highlight show *that* a line has a problem. The message itself is echoed in the
-command line for whichever line the cursor is on:
-
-```
-[karate] E: Unclosed '(' in call to 'karate.jsonPath'
-```
-
--   `g:karate_linter_echo_cursor`: `1` or `0`. Default `1`.
-
-Details worth knowing:
-
--   When a line carries several diagnostics, the one under the cursor column
-    wins; otherwise errors are preferred over warnings, and the rest are
-    summarised as `(+N more)`.
--   Long messages are clipped to the width of the command line so that Vim
-    never stops with a `Press ENTER` prompt. Clipping counts display cells, so
-    non-ASCII names survive intact.
--   The command line is only written to when the message actually changes, to
-    avoid wiping messages from other plugins on every cursor movement.
--   Normal and visual mode only — echoing during insert would fight with the
-    completion menu.
--   Nothing is printed while a file is being opened or written. Vim prints its
-    own message at those moments, and a second one on top of it would force a
-    `Press ENTER` prompt. When an edit changes the diagnostic on the line the
-    cursor is already on — which produces no cursor movement — the message is
-    refreshed once the debounce timer has run.
-
-`:KarateLintCheck` still opens the full list in the location list, where
-`<CR>` and `:lnext` jump between the findings.
-
-### Docstrings and rule scope
-
-The body of a `"""` block is payload — JSON, JS, XML, GraphQL — not Karate
-syntax. Rules that parse Karate statements therefore stop at the block
-delimiters: unbalanced parentheses, `callread`, `But`/`And`, missing space
-after a keyword, unused variables, undefined `request` variables, and every
-structural rule (`Feature:` / `Scenario:` / `Background:` / `Examples:`
-detection). Without this a JSON payload that merely mentions `Examples:`, or a
-line of JS starting with `*`, produced phantom errors.
-
-Two deliberate exceptions:
-
--   **Tabs are still reported inside docstrings** — they break indentation
-    wherever they appear. Trailing whitespace and maximum line length are not,
-    since both are normal in a payload.
--   **Variable and placeholder *usages* still count inside docstrings.** Karate
-    evaluates embedded expressions such as `#(userId)`, and Gherkin substitutes
-    `<placeholder>` values into docstrings, so a variable used only inside a
-    block is genuinely used and is not reported as unused. Only *definitions*
-    (`* def x = ...`) are ignored there.
-
-The `"""` delimiter lines themselves are treated as Karate syntax, so trailing
-whitespace on them is still flagged.
-
 -   **Unterminated string literal in a step:** `Given path 'oops`
     -   `g:karate_linter_unterminated_string_rule`: `1` or `0`.
     -   `g:karate_linter_unterminated_string_level`: Severity.
@@ -364,6 +322,67 @@ whitespace on them is still flagged.
     -   `g:karate_linter_missing_background_rule`: `1` or `0`.
     -   `g:karate_linter_missing_background_level`: Severity.
     -   Defaults: `1`, `'KarateLintWarn'`
+
+### Seeing the message
+
+Signs in the gutter (`>>` for errors, `W>` for warnings) and the inline
+highlight show *that* a line has a problem. The message itself is echoed in the
+command line for whichever line the cursor is on:
+
+```
+[karate] E: Unclosed '(' in call to 'karate.jsonPath'
+```
+
+-   `g:karate_linter_echo_cursor`: `1` or `0`. Default `1`.
+
+Details worth knowing:
+
+-   When a line carries several diagnostics, the one under the cursor column
+    wins; otherwise errors are preferred over warnings, and the rest are
+    summarised as `(+N more)`.
+-   Long messages are clipped to the width of the command line so that Vim
+    never stops with a `Press ENTER` prompt. Clipping counts display cells, so
+    non-ASCII names survive intact.
+-   The command line is only written to when the message actually changes, to
+    avoid wiping messages from other plugins on every cursor movement.
+-   Normal and visual mode only — echoing during insert would fight with the
+    completion menu.
+-   Nothing is printed while a file is being opened or written. Vim prints its
+    own message at those moments, and a second one on top of it would force a
+    `Press ENTER` prompt. When an edit changes the diagnostic on the line the
+    cursor is already on — which produces no cursor movement — the message is
+    refreshed once the debounce timer has run.
+
+`:KarateLintCheck` still opens the full list in the location list, where
+`<CR>` and `:lnext` jump between the findings.
+
+### Docstrings and rule scope
+
+The body of a `"""` block is payload — JSON, JS, XML, GraphQL — not Karate
+syntax. Rules that parse Karate statements therefore stop at the block
+delimiters: unbalanced parentheses, `callread`, `But`/`And`, missing space
+after a keyword, and every structural rule (`Feature:` / `Scenario:` /
+`Background:` / `Examples:` detection). Without this a JSON payload that
+merely mentions `Examples:`, or a line of JS starting with `*`, produced
+phantom errors.
+
+Two deliberate exceptions:
+
+-   **Tabs are still reported inside docstrings** — they break indentation
+    wherever they appear. Trailing whitespace and maximum line length are not,
+    since both are normal in a payload.
+-   **Variable and placeholder *usages* still count inside docstrings.** Karate
+    evaluates embedded expressions such as `#(userId)`, and Gherkin substitutes
+    `<placeholder>` values into docstrings, so a variable used only inside a
+    block is genuinely used and is not reported as unused. This is what makes
+    the unused-variable, unused-header and undefined-`request`-variable rules
+    a half-exception rather than an exception: they skip *definitions*
+    (`* def x = ...`) inside a block, and count every use of one.
+
+The `"""` delimiter lines themselves are treated as Karate syntax, so trailing
+whitespace on them is still flagged — though the save-time tab fix leaves the
+whole block alone, delimiters included, for the reason given under
+[Formatting](#formatting).
 
 ---
 
@@ -559,8 +578,19 @@ and the formatter were simply not running while the message was appearing.
 
 Contributions are welcome! If you find a bug, have a feature request, or want to contribute code, please feel free to:
 
-1.  **Open an issue**: Report bugs or suggest new features on the [GitHub Issues page](https://github.com/Propaz/karate_linter/issues).
+1.  **Open an issue**: Report bugs or suggest new features on the [GitHub Issues page](https://github.com/Propaz/karate-linter/issues).
 2.  **Submit a pull request**: If you've implemented a fix or a new feature, please open a pull request. Ensure your code adheres to the existing style and conventions.
+
+**Run the test suite** before you do: `tests/run.sh`. It needs nothing but
+Vim. `tests/baseline.sorted.txt` is a recorded snapshot of every diagnostic
+the linter produces over `tests/fixtures/`, and it is the contract — if your
+change moves a line there, that is the change, and the pull request should say
+why each moved line moved. `tests/run.sh --accept` re-records it; do not reach
+for that to turn a red suite green.
+
+A new or changed rule wants two fixtures, one that must fire and one that must
+not, and a case in the `option handling` section asserting that its `_rule`
+option switches it off.
 
 ---
 

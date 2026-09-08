@@ -15,9 +15,13 @@ Step-by-step procedures for the recurring kinds of work in this repository.
 
 2. **Add fixtures first**, one that must fire and one that must not. Put the
    tricky cases in the negative fixture — that is the one that earns its keep.
-   Whitespace-sensitive fixtures are generated with `printf` so tabs and
-   trailing spaces are exact; `.gitattributes` marks `tests/fixtures/**` as
-   `-text` so git never rewrites them.
+   Write whitespace-sensitive fixtures with `printf` rather than an editor, so
+   the tabs and trailing spaces are exactly what you meant — there is no
+   generator script, it is a one-off `printf > tests/fixtures/NN_name.feature`
+   each time, and fixtures 01, 15, 19 and 35 were made that way.
+   `.gitattributes` marks `tests/fixtures/**` and `tests/baseline.*.txt` as
+   `-text` so git never rewrites either, and the file must sit *directly* in
+   `tests/fixtures/` — `.gitignore` excepts only that one level.
 
 3. **Write the rule** in `autoload/karate/linter.vim`. Statement-level rules
    take `docstring_body` and skip it. Anchor diagnostics with byte columns.
@@ -140,9 +144,32 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 
 2. **Benchmark on a realistic file, not a synthetic one.** A generated file
    with no quotes made the delimiter scanner look free; on a file with quotes
-   in every step it cost 788 ms. `/tmp/klbench/real.feature` in the session
-   history was 60 scenarios of quoted URLs, JSON headers and `karate.get()`
-   calls — that shape is what matters.
+   in every step it cost 788 ms. The shape that matters is ~60 scenarios of
+   quoted URLs, JSON docstrings and `karate.get()` calls. This generator makes
+   786 lines of it; add steps per scenario if you want the ~1100-line file the
+   2.4.0 measurements used. Generate one rather than looking for an old file:
+
+   ```sh
+   python3 - <<'PY' > /tmp/real.feature
+   print("Feature: bench\n\n    Background:\n        * def t = 1\n")
+   for i in range(60):
+       print(f"    Scenario: case {i}")
+       print(f"        Given url 'https://service.internal/api/x/{i}'")
+       print("        And header Authorization = 'Bearer ' + t")
+       print("        And request\n        \"\"\"\n        {")
+       print(f'          "index": {i}, "note": "https://example.test/x"')
+       print("        }\n        \"\"\"")
+       print("        When method post\n        Then status 200")
+       print("        And def n = karate.get('cursor', 'none')\n")
+   PY
+   ```
+
+   **Time the same input in both trees.** Averaging N saves in a row is only
+   honest when the buffer is unchanged by a save; if the pass under test edits
+   the buffer, the second iteration is measuring a different file — and the
+   two trees can converge on *different* files, which is how a 22% "win" got
+   reported here before being remeasured. Re-`edit!` the file inside the loop
+   in that case, and say which of the two you measured.
 
 3. **Compare against a real "before".** Extract it from git:
    ```sh
@@ -242,7 +269,8 @@ then `ApplyIndent()`. `:KarateFormat` is the same three with messages.
 `tests/run.sh` is the report snapshot plus seven scripts. It takes no filter
 flag, so to run one, run it directly — and to run the whole suite against
 another build, `VIM=` selects the binary, which is the only way to check the
-9.1.0009 floor:
+9.1.0009 floor — spelled `has('patch-9.1.9')` in the guard, since Vim drops
+the leading zeros of a patch number and `patch-9.1.0009` would never match:
 
 ```sh
 vim -Nu NONE -es -S tests/check_echo.vim </dev/null
@@ -281,6 +309,10 @@ The traps below all cost time at least once in this project.
 - **`vim -es` hangs forever** on a script error or a missing file: ex mode
   waits for input on stdin. Always `</dev/null`, and `timeout 90` for anything
   long. Two backgrounded 120-second timeouts here were both this.
+  `timeout` is GNU coreutils and **is not on a stock macOS** — there it is
+  `gtimeout` if coreutils is installed, and otherwise nothing, so `</dev/null`
+  is the part that has to be habit. A recipe here that leans on `timeout` will
+  simply not run on the machine this project is developed on.
 - **See the error** with
   `vim -Nu NONE -es --cmd 'set verbosefile=/tmp/err.txt' -S script.vim`.
 - **The shell's working directory persists between tool calls.** A `cd

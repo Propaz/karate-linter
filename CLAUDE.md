@@ -14,6 +14,14 @@ forgotten.
 | `plugin/karate_linter.vim` | Thin. Options, highlight links, commands, autocommands. Vim9 script. |
 | `autoload/karate/linter.vim` | The engine. Reached via `import autoload`, so it is not compiled until a `.feature` buffer exists. |
 | `tests/` | The suite. `tests/baseline.sorted.txt` is committed and is the contract. |
+| `docs/claude/playbooks.md` | The procedures. Read it before adding or changing a rule, touching the formatter, optimising, releasing, or debugging the harness. |
+
+`.gitignore` ignores `*.feature` everywhere and makes exactly one exception,
+`!tests/fixtures/*.feature` — not `**`. So a fixture belongs *directly* in
+that directory: one placed in a subdirectory is silently untrackable, and the
+baseline glob would not see it either. Any other `.feature` file in the tree,
+including a scratch one in the repository root, is invisible to git by design
+— that is the mechanism behind `tests/local/`.
 
 ## The contract
 
@@ -198,7 +206,26 @@ after a comment" — and rebuild it with invented content.
     `_rule`, and it is the only option read as a bare `g:` rather than through
     `get()` — so the engine hard-depends on `plugin/` having run.
 
-13. **The `b:` state belongs to `UpdateDiagnostics()`, not to
+13. **The plugin defines no mappings, and that is a decision.** `<CR>` in the
+    location list is Vim's own built-in jump; claiming it — with a mapping or
+    a `FileType qf` autocommand — would break the thing the README's
+    troubleshooting section explains how to unbreak, since a user's `<C-m>`
+    mapping already collides with it. Signs, text properties, commands and
+    autocommands are the whole surface. Adding a mapping needs a reason and
+    an option to turn it off, not a convenience.
+
+14. **Sign and property identity is derived, not allocated.** The two property
+    types (`karate_lint_error`, `karate_lint_warn`) and the two sign
+    definitions are created once at engine load and are *global*, not
+    buffer-local — hence the `prop_type_get()` guard around each. Per buffer,
+    the sign group is `karate_linter_<bufnr>` and a sign's id is
+    `SIGN_ID_BASE + lnum`, so one line can only ever hold one sign and
+    re-linting replaces rather than accumulates. A second sign per line has
+    nowhere to go without changing that scheme, and `check_diagnostics.vim`
+    asserts both the one-sign-per-line count and that an error outranks a
+    warning in the gutter.
+
+15. **The `b:` state belongs to `UpdateDiagnostics()`, not to
     `GenerateReport()`.** The report function is pure; the autocommand-driven
     one is what sets `b:karate_has_errors` (the gate the formatter refuses on),
     `b:karate_diagnostics` (the per-line index, keyed `string(lnum)`),
