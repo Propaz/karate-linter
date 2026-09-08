@@ -319,3 +319,66 @@ passed whether the gate held or not.
 
 The pattern for a probe: write a small script that prints results with
 `writefile()`, run it with `vim -Nu NONE -es -S`, read the file.
+
+---
+
+## When a hypothesis needs an adversarial pass
+
+The suite reviews a diff; nothing reviews an idea. Three kinds of idea here
+have cost more than the code that implemented them, and for those it is worth
+having something actively try to break the proposal *before* it is written.
+For everything else the baseline diff is the review, and a second opinion is
+noise — most changes in this repository are small and the contract catches
+them.
+
+1. **Widening a shared boundary.** `DOCSTRING_PATTERN` is the engine's whole
+   idea of where a docstring is, so widening it moves every docstring rule at
+   once — which is why invariant 4 asks for its own change and its own
+   baseline. The same shape: `STEP_PATTERN`, the `docstring_body` map, the
+   level table in `ComputeLevels()`. The question to answer first is not "is
+   the new pattern right" but "which rules change answer if it lands".
+
+2. **Touching a payload, or wanting to run on save.** The line between the
+   two classes of formatter command *is* the payload, and a save-time pass
+   that edits one is the most damaging thing this plugin can do: Karate
+   receives a different string and no diagnostic ever fires. Such a proposal
+   always arrives looking like a tidy save-time fix — see invariant 4 for
+   where it belongs instead.
+
+3. **A rule's boundary.** Most of the cost in this project has been false
+   positives, so what must *not* fire is the decision, and it is worth
+   arguing before there is code to defend. *Adding a rule*, step 1.
+
+An optimisation argued instead of measured is a fourth, but it already has a
+cheaper answer than debate: *Performance work*, step 1.
+
+---
+
+## Auditing a claim, or a document, against the code
+
+Four classes of decay are now checked on every run by
+`tests/check_conventions.vim` — an undocumented option, a rule whose off
+switch is never executed, a document naming a function or file that no longer
+exists, and a fixture the baseline has never seen. Start an audit by reading
+that script, so it covers what is left rather than what is already automated.
+
+For the rest, the discipline is the same one the probe table is built on:
+
+- **A claim counts as checked only when a command ran and its output was
+  read.** Every finding this repository's audits have produced came from
+  checking a claim against something that can say no — a grep, a `git log
+  -S`, a patched scratch tree — and none came from reasoning about whether a
+  claim sounded right.
+- **Three verdicts, and the third is a real answer.** Confirmed, refuted, or
+  unverifiable. "Probed against four colorschemes" and the performance
+  numbers are unverifiable from the repository, and saying so is worth more
+  than a confident guess in either direction.
+- **Cite `file:line`.** A claim without one cannot be rechecked next year,
+  and the conventions gate now keeps such citations honest.
+- **Check the checker.** A check that is supposed to fail must be *shown*
+  failing, against a deliberately broken copy of the tree — every assertion
+  in `check_conventions.vim` was, and fixture 34 was too. And make the
+  breakage announce itself: two of those mutation cases first came back green
+  because the mutation had silently failed to apply, not because the check
+  worked. That is the trap at the top of this section wearing different
+  clothes.
