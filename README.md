@@ -23,6 +23,21 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading to 2.4
+
+-   **Saving no longer replaces tabs in or around a docstring.** It used to,
+    and that quietly changed the string Karate receives: Gherkin strips the
+    opening `"""`'s indentation from every body line, so replacing a tab on a
+    body line — or on a delimiter — rewrites the payload. Such a tab is now
+    reported and left in place. This narrows the 2.2 change below; everywhere
+    else, saving still fixes tabs exactly as it did.
+-   **A file with a tab in a docstring is therefore not reindented on save**
+    until you deal with the tab, because the error gate stops the indent pass
+    on any error. `:KarateTabsToSpaces` still replaces every tab in the
+    buffer, payload included — it is explicit, which is why it is allowed to.
+-   `g:karate_linter_debounce_ms` is documented for the first time (default
+    `150`). It is not new; it was simply missing from this file.
+
 ## Upgrading to 2.2
 
 -   **Auto-format on save no longer uses `gg=G`.** It computes Gherkin
@@ -33,7 +48,8 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **Saving now fixes tabs and trailing whitespace** instead of refusing to
     format because of them. Both are Error-level rules, and any error stopped
     the formatter, so these were the two things it could have fixed and never
-    did. Turning the respective rule off also turns its fix off.
+    did. Turning the respective rule off also turns its fix off. (Narrowed in
+    2.4: neither fix reaches inside a docstring.)
 -   **Indentation is always spaces**, `g:karate_linter_indent_width` of them
     per level (default 4). `'expandtab'`, `'shiftwidth'` and `'tabstop'` do not
     affect it — the previous behaviour indented with tabs under `'noexpandtab'`
