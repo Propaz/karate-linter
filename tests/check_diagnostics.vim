@@ -210,6 +210,24 @@ call s:Ok('a header used only in a docstring is not called unused',
 call s:Ok('and the fixture is clean of everything else',
     \ len(KarateLinterReport()), 0)
 
+" --- 12. The structural rules must not fire on near misses ---
+" Nine structural rules had `12_clean.feature` as their entire negative half,
+" so a false positive in one could only ever surface as a baseline line.
+" Fixture 36 is a real negative: Gherkin keywords in comments and in a
+" docstring payload, inline XML inside an outline, and a tagged `Examples:`
+" block - the last of which used to be reported twice over, once as an outline
+" with no table and once as an orphaned Examples.
+" Fixture 37 pins the other answer, so that "tags never end an outline" is
+" not a way to make 36 pass.
+call add(s:out, '--- structural near misses')
+call s:Fixture('36_structural_near_misses.feature')
+call s:Ok('near misses report nothing at all', len(KarateLinterReport()), 0)
+
+call s:Fixture('37_tag_ends_outline.feature')
+call s:Ok('a tag introducing a scenario still ends an outline',
+    \ len(filter(KarateLinterReport(), 'v:val.text =~# "corresponding"')), 1)
+call s:Ok('and that is the only finding there', len(KarateLinterReport()), 1)
+
 call add(s:out, '')
 call add(s:out, s:fail == 0 ? 'RESULT: ALL OK' : printf('RESULT: %d FAILURE(S)', s:fail))
 call writefile(s:out, s:root . '/tests/diagnostics.txt')
