@@ -23,6 +23,29 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading to 3.0
+
+A major version because three new rules are on by default, so a file that
+linted clean in 2.6 can light up. Each can be switched off on its own; see
+[Rules and Levels](#rules-and-levels).
+
+-   **New: `@setup` Scenarios and `karate.setup()`.**
+    -   `missing_setup` (Error): a `karate.setup()` / `karate.setupOnce()` call
+        that no `@setup` Scenario answers — Karate fails it at run time — and
+        `@setup` on a `Scenario Outline`, which Karate never looks at.
+    -   `unused_setup` (Warn): a `@setup` Scenario nothing calls, so it never
+        runs.
+    -   `undefined_setup_field` (Warn): `karate.setupOnce().rows` where the
+        `@setup` Scenario never assigns `rows`. Silent when that Scenario can
+        create variables without assigning them (an unassigned `call`, an
+        `eval`, `karate.set()`).
+-   **A dynamic `Scenario Outline` is no longer reported.** An `Examples`
+    table of a single cell (`| karate.setupOnce().rows |`,
+    `| read('cats.json') |`) is an expression, not a header. It used to draw
+    an Error for having no data rows, a Warn for an unused header and an Error
+    for every `<placeholder>` in the outline; all three are gone. A single
+    cell the outline uses as `<cell>` is still reported as missing its rows.
+
 ## Upgrading to 2.6
 
 -   **An `Examples` column ending in `!` is understood.** Karate reads
