@@ -159,3 +159,11 @@
     L22  c34 -40  Warn             Header 'extra!' is defined in the Examples table but not used in the Scenario Outline.
 === 39_setup_ok.feature
     (no issues)
+=== 40_setup_bad.feature
+    L10  c5  -18  Warn             '@setup' Scenario is never called by karate.setup() or karate.setupOnce(), so it never runs
+    L14  c5  -19  Error            '@setup' on a 'Scenario Outline' is never found; karate.setup() only calls a plain 'Scenario'
+    L26  c15 -35  Error            No Scenario tagged '@setup=dogs' in this file; karate.setup() fails at run time
+    L32  c40 -47  Warn             'kittens' is not defined in the '@setup' Scenario on line 7
+    L38  c15 -38  Error            No Scenario tagged '@setup=outline' in this file; karate.setup() fails at run time
+=== 41_setup_absent.feature
+    L11  c15 -33  Error            No '@setup' Scenario in this file; karate.setup() fails at run time

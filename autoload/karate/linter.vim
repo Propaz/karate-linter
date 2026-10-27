@@ -1022,6 +1022,190 @@ def LintStructure(lines: list<string>, docstring_body: dict<bool>): list<dict<an
 enddef
 
 
+# --- @setup scenarios ----------------------------------------------------
+
+# karate.setup() or karate.setupOnce(), with an optional name, and the field
+# read off the result: group 1 is the raw argument, group 2 the field.
+const SETUP_CALL = '\Ckarate\.setup\%(Once\)\?\s*(\s*\([^)]\{-}\)\s*)\%(\.\([A-Za-z_$][A-Za-z0-9_$]*\)\)\?'
+
+# The step keywords that assign a variable, and the name they assign.
+const ASSIGN_PATTERN = '\C^\s*\%(\*\|Given\|When\|Then\|And\|But\)\s\+\%(def\|text\|table\|yaml\|csv\|string\|json\|xml\|xmlstring\|bytes\|copy\)\s\+\([A-Za-z_$][A-Za-z0-9_$]*\)'
+
+# What can put a variable into a scenario without a visible assignment: a call
+# whose result is not assigned shares its scope with the caller, and an eval
+# or karate.set() can define anything at all.
+const IMPLICIT_SCOPE_PATTERN = '\C^\s*\%(\*\|Given\|When\|Then\|And\|But\)\s\+\%(call\|callonce\|eval\)\s\|karate\.set\%(All\)\?\s*('
+
+# A Scenario tagged @setup runs only when karate.setup() asks for it, and
+# Karate resolves that the way Feature.getSetup() does: the first plain
+# Scenario in file order whose @setup tag carries the name - or any @setup
+# tag at all when no name is given. Outlines are skipped. A miss is a run-time
+# failure ('no scenario found with @setup tag').
+#
+# Calls count everywhere, docstrings included, since a JS payload can make one;
+# definitions only outside them.
+def LintSetup(lines: list<string>, docstring_body: dict<bool>): list<dict<any>>
+  var report: list<dict<any>> = []
+  var missing_on = RuleOn('missing_setup')
+  var unused_on = RuleOn('unused_setup')
+  var field_on = RuleOn('undefined_setup_field')
+  if !missing_on && !unused_on && !field_on
+    return report
+  endif
+
+  # One entry per @setup tag, in file order. Tags on the same Scenario share
+  # one scope: what it assigns, and whether anything calls it.
+  var setups: list<dict<any>> = []
+  var pending: list<dict<any>> = []
+  var scope: dict<any> = {}
+  var calls: list<dict<any>> = []
+  var lnum = 0
+
+  for line in lines
+    lnum += 1
+    var is_body = has_key(docstring_body, string(lnum))
+
+    if !is_body
+      if line =~# '^\s*#'
+        continue
+      elseif line =~# '^\s*@'
+        var start = 0
+        while true
+          var [tag, from, to] = matchstrpos(line, '@\S\+', start)
+          if from < 0
+            break
+          endif
+          var m = matchlist(tag, '\C^@setup\%(=\(.*\)\)\?$')
+          if !empty(m)
+            add(pending, {lnum: lnum, col: from + 1, end_col: to + 1,
+              names: split(m[1], ',')})
+          endif
+          start = to
+        endwhile
+        scope = {}
+        continue
+      elseif line =~# '\C^\s*Scenario\%( Outline\)\?:'
+        scope = {}
+        if !empty(pending)
+          scope = {vars: {}, implicit: false, used: false, lnum: lnum}
+          var outline = line =~# '\C^\s*Scenario Outline:'
+          for tag in pending
+            add(setups, extend(tag, {outline: outline, scope: scope}))
+          endfor
+          pending = []
+        endif
+        continue
+      elseif line !~# '^\s*$'
+        pending = []
+        if line =~# '\C^\s*\%(Feature\|Background\|Examples\|Scenarios\):'
+          scope = {}
+        endif
+      endif
+    endif
+
+    if !empty(scope)
+      if !is_body
+        var assigned = matchlist(line, ASSIGN_PATTERN)
+        if !empty(assigned)
+          scope.vars[assigned[1]] = true
+        endif
+      endif
+      if line =~# IMPLICIT_SCOPE_PATTERN
+        scope.implicit = true
+      endif
+    endif
+
+    if stridx(line, 'karate.setup') < 0
+      continue
+    endif
+    var start = 0
+    while true
+      var [whole, from, to] = matchstrpos(line, SETUP_CALL, start)
+      if from < 0
+        break
+      endif
+      var m = matchlist(line, SETUP_CALL, from)
+      var arg = m[1]
+      var literal = matchlist(arg, '^\%(''\([^'']*\)''\|"\([^"]*\)"\)$')
+      add(calls, {
+        lnum: lnum, col: from + 1,
+        end_col: to + 1 - (empty(m[2]) ? 0 : len(m[2]) + 1),
+        named: !empty(arg),
+        dynamic: !empty(arg) && empty(literal),
+        name: empty(literal) ? '' : literal[1] .. literal[2],
+        field: m[2],
+        field_col: to + 1 - len(m[2]),
+      })
+      start = to
+    endwhile
+  endfor
+
+  for call in calls
+    if call.dynamic
+      # The name is only known at run time: nothing can be said about this
+      # call, and every @setup Scenario may be the one it reaches.
+      for setup in setups
+        setup.scope.used = true
+      endfor
+      continue
+    endif
+
+    var target: dict<any> = {}
+    for setup in setups
+      if !setup.outline && (!call.named || index(setup.names, call.name) >= 0)
+        target = setup
+        break
+      endif
+    endfor
+
+    if empty(target)
+      if missing_on
+        add(report, {
+          lnum: call.lnum, col: call.col, end_col: call.end_col,
+          text: call.named
+            ? printf("No Scenario tagged '@setup=%s' in this file; karate.setup() fails at run time", call.name)
+            : "No '@setup' Scenario in this file; karate.setup() fails at run time",
+          level: RuleLevel('missing_setup'),
+        })
+      endif
+      continue
+    endif
+
+    target.scope.used = true
+    if field_on && !empty(call.field) && !target.scope.implicit
+        && !has_key(target.scope.vars, call.field)
+      add(report, {
+        lnum: call.lnum, col: call.field_col,
+        end_col: call.field_col + len(call.field),
+        text: printf("'%s' is not defined in the '@setup' Scenario on line %d",
+          call.field, target.scope.lnum),
+        level: RuleLevel('undefined_setup_field'),
+      })
+    endif
+  endfor
+
+  for setup in setups
+    if setup.outline
+      if missing_on
+        add(report, {
+          lnum: setup.lnum, col: setup.col, end_col: setup.end_col,
+          text: "'@setup' on a 'Scenario Outline' is never found; karate.setup() only calls a plain 'Scenario'",
+          level: RuleLevel('missing_setup'),
+        })
+      endif
+    elseif unused_on && !setup.scope.used
+      add(report, {
+        lnum: setup.lnum, col: setup.col, end_col: setup.end_col,
+        text: "'@setup' Scenario is never called by karate.setup() or karate.setupOnce(), so it never runs",
+        level: RuleLevel('unused_setup'),
+      })
+    endif
+  endfor
+
+  return report
+enddef
+
+
 # --- The report ----------------------------------------------------------
 
 export def GenerateReport(): list<dict<any>>
@@ -1152,6 +1336,7 @@ export def GenerateReport(): list<dict<any>>
 
   extend(report, LintUndefinedRequestVariables(buffer_lines, docstring_body))
   extend(report, LintStructure(buffer_lines, docstring_body))
+  extend(report, LintSetup(buffer_lines, docstring_body))
 
   # File-level rules. match() on a List stops at the first hit and makes no
   # copy, unlike the filter(copy(...)) this replaced, which scanned the whole

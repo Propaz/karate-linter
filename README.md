@@ -345,6 +345,35 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
     -   `g:karate_linter_undefined_request_var_level`: Severity.
     -   Defaults: `1`, `'KarateLintError'`
 
+-   **`karate.setup()` with no `@setup` Scenario to find:** a call to
+    `karate.setup()` or `karate.setupOnce()`, optionally named
+    (`karate.setup('cats')` wants `@setup=cats`), that matches no `@setup`
+    Scenario in the file — Karate fails at run time with *no scenario found
+    with @setup tag*. Also reported: `@setup` on a `Scenario Outline`, which
+    Karate never looks at.
+    -   `g:karate_linter_missing_setup_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintError'`
+    -   Calls count anywhere but on a comment line, JS inside a docstring
+        included. A name that is not a string literal (`karate.setup(which)`)
+        is only known at run time, so that call is not judged.
+
+-   **`@setup` Scenario that nothing calls:** Karate skips it like `@ignore`,
+    so it never runs.
+    -   `g:karate_linter_unused_setup_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintWarn'`
+    -   A call whose name is only known at run time counts as calling every
+        `@setup` Scenario.
+
+-   **Field the `@setup` Scenario never defines:** in
+    `karate.setupOnce().rows`, `rows` is not assigned (`def`, `json`,
+    `string`, `table` and the other assigning keywords) in the Scenario the
+    call resolves to.
+    -   `g:karate_linter_undefined_setup_field_rule`, `..._level`
+    -   Defaults: `1`, `'KarateLintWarn'`
+    -   Silent for a Scenario that can create variables without assigning them:
+        a `call` or `callonce` whose result is not assigned (it shares its
+        scope with the caller), an `eval`, or `karate.set()`.
+
 -   **Missing `Feature` block:**
     -   `g:karate_linter_missing_feature_rule`: `1` or `0`.
     -   `g:karate_linter_missing_feature_level`: Severity.

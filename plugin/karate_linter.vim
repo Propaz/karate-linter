@@ -86,6 +86,12 @@ const DEFAULTS = {
   karate_linter_unused_header_level: 'KarateLintWarn',
   karate_linter_undefined_request_var_rule: 1,
   karate_linter_undefined_request_var_level: 'KarateLintError',
+  karate_linter_missing_setup_rule: 1,
+  karate_linter_missing_setup_level: 'KarateLintError',
+  karate_linter_unused_setup_rule: 1,
+  karate_linter_unused_setup_level: 'KarateLintWarn',
+  karate_linter_undefined_setup_field_rule: 1,
+  karate_linter_undefined_setup_field_level: 'KarateLintWarn',
   karate_linter_debounce_ms: 150,
   karate_linter_echo_cursor: 1,
 }
