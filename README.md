@@ -23,6 +23,19 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading to 2.6
+
+-   **An `Examples` column ending in `!` is understood.** Karate reads
+    `| count! |` as the column `count`, its cells evaluated as JS rather than
+    taken as strings. The linter took the `!` for part of the name, so a
+    valid `<count>` was reported as an undefined placeholder and `count!` as
+    an unused header. Both findings disappear.
+-   The same rule now finds two real mistakes that used to pass: a
+    placeholder written with the `!` (`<count!>`), which Karate never
+    substitutes, and a column given twice as `id` and `id!`, which Karate
+    treats as one name. A file that relied on either can light up after the
+    upgrade.
+
 ## Upgrading to 2.5
 
 -   **A tagged `Examples:` block is no longer reported.** Gherkin lets you tag
@@ -310,6 +323,11 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
     -   `g:karate_linter_undefined_placeholder_rule`: `1` or `0`.
     -   `g:karate_linter_undefined_placeholder_level`: Severity.
     -   Defaults: `1`, `'KarateLintError'`
+    -   A column header ending in `!` is a Karate type hint (`| count! |`
+        evaluates the cell as JS). The `!` is not part of the name: the column
+        is `<count>`, and `<count!>` is reported, because Karate never
+        substitutes it. The same name rule applies to the unused-header check
+        and to duplicate columns, so `| id | id! |` is a duplicate.
 
 -   **Unused header in `Examples` table:**
     -   `g:karate_linter_unused_header_rule`: `1` or `0`.

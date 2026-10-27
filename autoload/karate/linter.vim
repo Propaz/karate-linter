@@ -499,6 +499,14 @@ def ScanOutlines(lines: list<string>, docstring_body: dict<bool>): dict<list<num
   return {invalid: invalid, orphaned: orphaned}
 enddef
 
+# The name Karate gives an Examples column. A trailing '!' is a type hint
+# (evaluate the cell as JS instead of taking it as a string) and is cut off the
+# key in Table.java, so 'count!' is the variable 'count', substituted as
+# '<count>' - '<count!>' is never replaced.
+def ExampleKey(header: string): string
+  return header =~ '!$' ? strpart(header, 0, len(header) - 1) : header
+enddef
+
 # One Examples table's internal consistency: duplicated column names, data
 # rows whose cell count disagrees with the header, and a header with no data
 # rows under it (an outline that silently never runs).
@@ -509,20 +517,21 @@ def LintExamplesTable(lines: list<string>, docstring_body: dict<bool>,
   var level = RuleLevel('examples_table')
 
   # Duplicate column names: the later one wins in Gherkin, so the earlier
-  # column is silently unreachable.
+  # column is silently unreachable. 'id' and 'id!' are one name.
   var seen: dict<bool> = {}
   for cell in header_cells
     if empty(cell.text)
       continue
     endif
-    if has_key(seen, cell.text)
+    var key = ExampleKey(cell.text)
+    if has_key(seen, key)
       add(report, {
         lnum: header_lnum, col: cell.col, end_col: cell.end_col,
         text: printf("Duplicate Examples column '%s'", cell.text),
         level: level,
       })
     endif
-    seen[cell.text] = true
+    seen[key] = true
   endfor
 
   # Data rows run contiguously under the header until the table stops.
@@ -673,7 +682,7 @@ def LintScenarioOutlines(lines: list<string>, docstring_body: dict<bool>): list<
     var header_cells = ParseTableRow(lines[header_lnum - 1])
     for cell in header_cells
       if !empty(cell.text)
-        add(table_headers, cell.text)
+        add(table_headers, ExampleKey(cell.text))
       endif
     endfor
 
@@ -738,7 +747,7 @@ def LintScenarioOutlines(lines: list<string>, docstring_body: dict<bool>): list<
         if empty(cell.text)
           continue
         endif
-        if index(used_vars, cell.text) == -1
+        if index(used_vars, ExampleKey(cell.text)) == -1
           add(report, {
             lnum: header_lnum,
             col: cell.col,
