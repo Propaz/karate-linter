@@ -310,6 +310,11 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
     -   `g:karate_linter_undefined_placeholder_rule`: `1` or `0`.
     -   `g:karate_linter_undefined_placeholder_level`: Severity.
     -   Defaults: `1`, `'KarateLintError'`
+    -   A column header ending in `!` is a Karate type hint (`| count! |`
+        evaluates the cell as JS). The `!` is not part of the name: the column
+        is `<count>`, and `<count!>` is reported, because Karate never
+        substitutes it. The same name rule applies to the unused-header check
+        and to duplicate columns, so `| id | id! |` is a duplicate.
 
 -   **Unused header in `Examples` table:**
     -   `g:karate_linter_unused_header_rule`: `1` or `0`.

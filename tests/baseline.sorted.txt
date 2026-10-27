@@ -152,3 +152,8 @@
     (no issues)
 === 37_tag_ends_outline.feature
     L10  c5  -40  Error            'Scenario Outline' without a corresponding 'Examples' block
+=== 38_examples_type_hints.feature
+    L19  c17 -24  Error            Placeholder '<flag!>' is not defined in the Examples table.
+    L22  c15 -20  Warn             Header 'flag!' is defined in the Examples table but not used in the Scenario Outline.
+    L22  c28 -31  Error            Duplicate Examples column 'id!'
+    L22  c34 -40  Warn             Header 'extra!' is defined in the Examples table but not used in the Scenario Outline.
