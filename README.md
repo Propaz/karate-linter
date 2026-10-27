@@ -328,6 +328,12 @@ Severity can be `KarateLintError` (uses `Error` highlight group) or `KarateLintW
         is `<count>`, and `<count!>` is reported, because Karate never
         substitutes it. The same name rule applies to the unused-header check
         and to duplicate columns, so `| id | id! |` is a duplicate.
+    -   A table of exactly one cell and no data rows is a *dynamic* outline:
+        the cell is an expression (`| karate.setupOnce().rows |`,
+        `| read('cats.json') |`) whose keys exist only at run time, so this
+        rule, the unused-header rule and the table checks all stay silent on
+        it. The exception is a cell the outline uses as `<cell>`: that is a
+        header whose rows are missing, and it is still reported.
 
 -   **Unused header in `Examples` table:**
     -   `g:karate_linter_unused_header_rule`: `1` or `0`.

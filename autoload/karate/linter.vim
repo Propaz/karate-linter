@@ -507,6 +507,21 @@ def ExampleKey(header: string): string
   return header =~ '!$' ? strpart(header, 0, len(header) - 1) : header
 enddef
 
+# Whether a table row follows the header, past blank lines and comments - the
+# same walk LintExamplesTable() makes over the rows.
+def HasDataRow(lines: list<string>, docstring_body: dict<bool>,
+    header_lnum: number, outline_end: number): bool
+  var lnum = header_lnum + 1
+  while lnum <= outline_end && !has_key(docstring_body, string(lnum))
+    var line = lines[lnum - 1]
+    if line !~# '^\s*$' && line !~# '^\s*#'
+      return line =~# '^\s*|.*|$'
+    endif
+    lnum += 1
+  endwhile
+  return false
+enddef
+
 # One Examples table's internal consistency: duplicated column names, data
 # rows whose cell count disagrees with the header, and a header with no data
 # rows under it (an outline that silently never runs).
@@ -686,11 +701,6 @@ def LintScenarioOutlines(lines: list<string>, docstring_body: dict<bool>): list<
       endif
     endfor
 
-    if table_rule
-      extend(report, LintExamplesTable(lines, docstring_body, header_lnum,
-        outline.end, header_cells))
-    endif
-
     # Placeholders used in the outline body.
     var placeholder_pattern = '<\([^<>]\+\)>'
     var end_of_steps = examples_lnum > -1 ? examples_lnum - 1 : outline.end
@@ -711,6 +721,22 @@ def LintScenarioOutlines(lines: list<string>, docstring_body: dict<bool>): list<
         endif
       endwhile
     endfor
+
+    # A dynamic outline: one cell and no data rows is an expression - a JSON
+    # array or a generator function, often 'karate.setupOnce().rows' - and
+    # its keys are only known at run time, so none of the table, header or
+    # placeholder checks can say anything. A cell the outline names as
+    # '<cell>' is a header whose rows are missing instead, and stays checked.
+    if len(header_cells) == 1
+        && !has_key(placeholders, ExampleKey(header_cells[0].text))
+        && !HasDataRow(lines, docstring_body, header_lnum, outline.end)
+      continue
+    endif
+
+    if table_rule
+      extend(report, LintExamplesTable(lines, docstring_body, header_lnum,
+        outline.end, header_cells))
+    endif
 
     if placeholder_rule
       for used_var in keys(placeholders)
