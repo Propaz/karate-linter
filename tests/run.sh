@@ -161,6 +161,9 @@ rule_pair undefined_request_var  07_request_vars.feature   "used with 'request' 
 rule_pair missing_feature        09_structure_missing_all.feature 'Missing mandatory'                "1 KarateLintWarn"
 rule_pair missing_scenario       09_structure_missing_all.feature 'blocks in the file'               "1 KarateLintWarn"
 rule_pair missing_background     11_structure_no_background.feature "Missing 'Background' block"     "1 KarateLintWarn"
+rule_pair missing_setup          40_setup_bad.feature      'fails at run time\|is never found'       "3 KarateLintError"
+rule_pair unused_setup           40_setup_bad.feature      'so it never runs'                        "1 KarateLintWarn"
+rule_pair undefined_setup_field  40_setup_bad.feature      "is not defined in the '@setup' Scenario" "1 KarateLintWarn"
 
 rm -f "$KL_RESULT"
 
