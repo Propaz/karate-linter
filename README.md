@@ -23,6 +23,19 @@ This plugin provides real-time linting for common errors and style issues in Kar
 -   **JSON Formatting:** Includes a command to format JSON content within a docstring block on demand.
 -   **Configurable:** Most rules and their severity levels can be easily customized.
 
+## Upgrading to 2.6
+
+-   **An `Examples` column ending in `!` is understood.** Karate reads
+    `| count! |` as the column `count`, its cells evaluated as JS rather than
+    taken as strings. The linter took the `!` for part of the name, so a
+    valid `<count>` was reported as an undefined placeholder and `count!` as
+    an unused header. Both findings disappear.
+-   The same rule now finds two real mistakes that used to pass: a
+    placeholder written with the `!` (`<count!>`), which Karate never
+    substitutes, and a column given twice as `id` and `id!`, which Karate
+    treats as one name. A file that relied on either can light up after the
+    upgrade.
+
 ## Upgrading to 2.5
 
 -   **A tagged `Examples:` block is no longer reported.** Gherkin lets you tag
